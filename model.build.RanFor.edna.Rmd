@@ -1,0 +1,726 @@
+## R code to build a RIVPACS-type model
+
+This version uses Random Forest (RF) to predict group membership;
+
+Otherwise, this script is the same as model.build.v4.r;
+
+J.Van Sickle, 02/25/10; Modified by B. Levenstein 2023; Modified by J. Levy 2023
+
+load required packages:
+```{r}
+
+#setwd("C:/Users/jacqu/eDNA_and_morphology_RCA")
+
+library(cluster)
+#library(Hmisc)
+library(randomForest)
+library(dplyr)
+library(sqldf)
+library(vegan)
+library(tibble)
+library(data.table)
+library(factoextra)
+
+```
+
+#Edna dataset - tidying code written by Jacqui Levy for this particular dataset
+
+Load in benthic and meta data; tidy and merge
+```{r}
+
+edna_benthic <- read.csv("C:/Users/jacqu/eDNA_and_morphology_RCA/21072022_eDNA genera.csv") 
+
+edna_benthic <- edna_benthic %>%
+    mutate(Sample_ID = toupper(Sample_ID)) %>%
+  arrange(desc(Sample_ID))
+
+meta <- read.csv("C:/Users/jacqu/eDNA_and_morphology_RCA/21072022_eDNA sample metadata.csv")
+
+meta <- meta %>%
+  mutate(Sample_ID = toupper(Sample_ID_UPDATED)) %>%
+  select(-c(Sample_ID_ORIGINAL, Sample_ID_UPDATED)) %>%
+    arrange(desc(Sample_ID))
+
+all.equal(edna_benthic$Sample_ID, meta$Sample_ID) #should return true
+
+#merge benthic data and meta data 
+edna_meta_benth <- merge(meta, edna_benthic, on = "Sample_ID") 
+
+```
+
+Habitat data tidying and merge - results in one aligned dataframe with all benthic, meta, and habitat data
+
+```{r}
+
+habitat <- read.csv("C:/Users/jacqu/eDNA_and_morphology_RCA/RIVPACS_habitat.csv")
+
+habitat <- habitat %>%
+    mutate(Sample_ID = toupper(Sample_ID)) %>%
+  arrange(desc(Sample_ID))
+
+alldata <- merge(habitat, edna_meta_benth, by = "Sample_ID")
+
+```
+
+```{r}
+
+
+
+```
+
+
+Code from here down is adapted from J.Van Sickle RF model
+
+#### STEP 1 -- INITIAL SETUP -- Organize the bug (benthic macroinvertebrate) and predictor (habitat) data
+
+Input data are predictor (habitat) data (for all sites) and a (site x taxa) matrix of abundance for all bugs at all sites.
+
+Assumes that predictor data file includes a column to ID the calibration, validation and test sites
+
+Step 1a - Read in and organize predictor data
+
+Input the predictor (habitat) data, tab delimited. Use the sample/site ID as the row name;
+```{r}
+
+predall <- alldata %>%
+  filter(Status == "Reference") %>%
+  select(c("Sample_ID", "inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")) %>%
+  column_to_rownames("Sample_ID")
+
+```
+
+Double-check that everything looks correct:
+```{r}
+
+head(predall) #look at 1st 5 rows, all columns
+dim(predall) # shows number of rows and columns
+
+```
+
+#Predictors selection
+
+You can use a correlation matrix to remove highly correlated variables if you are choosing from a large number of them.
+
+Correlation matrix creation:
+```{r} 
+
+#correlation matrix ran and all variables are kept for now, as current number of predictor variables are small 
+
+hab_cormatrix <- predall 
+
+res <-cor(hab_cormatrix[,-1])
+
+cormat <- round(res,2)
+
+#snowcover and airtemp are correlated, > |.8|
+#snowcover and elevation are correlated, > |.8| 
+#elevation and airtemp are correlated, > |.8|
+#runoff and precip are correlated, > |.8|
+#silt and sand are correlated, > |.8|
+
+#variables kept for now 
+
+```
+
+After candidate variables are chosen, put the (column) names of candidate predictors in a vector.
+
+Variables were originally chosen based on whether or not they were directly related to anthropogenic activities 
+
+```{r}
+
+candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")
+
+```
+
+View histograms of predictors, over all samples, to see if any transformations are desirable: 
+
+```{r}
+#this step was skipped and no transformations done until later
+
+#Transformations or scaling might be needed to put samples and variables on comparable scales so that clustering doesn't just reflect habitat variables with large values, ie; inundation vs elevation.
+
+#could consider changing to percent-maximum transformation within columns to prevent a single large variable from overwhelming important variations in numerically small variables, ie vegan::decostand()
+
+sapply(candvar,function(nam)hist(predall[,nam],main=nam))
+
+#continue for now, no scaling or transformations done
+
+```
+
+#### Step 1b - Input the assemblage data (bug data), as a site-by-taxa matrix
+
+```{r}
+
+#select bug data only and change cols to rownames 
+bugall <- alldata %>% 
+  filter(Status == "Reference") %>%
+  column_to_rownames("Sample_ID") %>%
+select(Ablabesmyia:Xenochironomus)  
+
+```
+#### Step 1c - Align bug and predictor data, by site/sample to make sure everything lines up
+
+```{r}
+
+#skipped, did earlier in data tidying
+
+row.names(bugall)==row.names(predall)
+
+```
+
+If samples are not aligned. Fix by aligning bugs data to predictor data, since latter is sorted by sample type
+
+```{r}
+
+#skipped
+bugall<-bugall[row.names(predall),]
+#check alignment again -- alignment OK (all read TRUE) 
+row.names(bugall)==row.names(predall)
+
+```
+
+#### Step 1d - Create subsets of calibration and validation data####
+
+Note: Not done for eDNA dataset
+
+Extract subsets of bug and predictor data for the calibration ("C") and validation ("V") sites;
+
+```{r}
+
+#eDNA data does not have a calibration/validation column
+
+#Instead the data was separated into test and reference sites, see above. The reference sites will be used for the model and test sites will be used to test the model prediction accuracy
+
+#use JVS's names for simplicity
+bugcal.pa <- bugall #bug data, presence/absence matrix, ref sites only 
+predcal <- predall #predictor (habitat data), ref sites only
+ 
+#not done
+predcal <- predall[predall[,'CalVal']=='C',] #predictor data - calibration sites
+pred.vld <- predall[substr(as.character(predall[,'CalVal']),1,1)=='V',]  #predictor data - validation sites
+
+bugcal <- bugall[predcal[,'CalVal']=='C',]; #Bug Abundance matrix, calibration sites;
+bugcal.pa <- bugall[predcal[,'CalVal']=='C',]; #Bug presence/absence matrix, calibration sites;
+bug.vld.pa <- bugall[substr(as.character(predval[,'CalVal']),1,1)=='V',]; #Bug presence/absence matrix, validation sites
+
+```
+
+####STEP 2 -- DISSIMILARITIES AND CLUSTER ANALYSIS####
+
+```{r}
+
+##Use vegan to create a dissimilarity matrix to use for the clustering analysis using the calibration sites of the benthic dataset
+##vegdist on calibration data, method = bray, binary = true
+
+dissim <- vegdist(bugcal.pa, method="bray", binary=TRUE)
+
+
+```
+
+Clustering of calibration sites using Agglomerative hierarchical method
+
+Use flexible-Beta method, with Beta=-0.6;
+See R documentation on agnes() in "cluster" package;
+When using agnes() with Flexible Beta strategy, set Beta=(1-2*Alpha) in Lance-Williams formula and Agglomerative hierarchical method
+A single value for par.method value specifies alpha, so alpha=0.8 gives Beta=-0.6;
+
+See: http://stratigrafia.org/8370/lecturenotes/clusterAnalysis.html#:~:text=The%20agglomerative%20coefficient%20measures%20the,indicate%20less%20well%2Dformed%20clusters. 
+```{r}
+clus1 <- agnes(x=dissim,diss=T,method="flexible",  par.method=0.8,keep.diss=F,keep.data=F)
+
+
+dissim2 <- vegdist(bugcal.pa, method="jaccard", binary=TRUE)
+clus2 <- hclust(dissim2, method = "complete")
+```
+
+
+```{r}
+
+pca_result <- prcomp(dissim2)
+
+summary(pca_result)
+
+
+fviz_pca_ind(pca_result, geom = "point")
+
+
+```
+
+Various plots of cluster outcome. Leaf labels are row numbers of dissim matrix
+that is, the order of sites in the calibration data set
+
+plot the dendrogram 
+
+```{r}
+
+plot(clus2,which.plots=2,labels=row.names(bugcal.pa), cex=.3)
+abline(h=15.0, col='red')
+
+#agglomerative coeff = 1; the clustering solution accurately reflects this data 
+#height is high- indicates high dissimilarity between clusters
+#looks like 5 groupings
+
+
+```
+
+
+```{r}
+#skipped
+#can also define a more general dendrogram structure. See 'dendrogram' help;
+dend1<-as.dendrogram(as.hclust(clus1))
+plot(dend1,horiz=T,cex=.2) #Plot dendrogram with horizontal branches
+
+```
+
+Plot dendogram with chosen groupings
+```{r}
+
+factoextra::fviz_dend(clus2, cex = 0.4, k = 8)
+factoextra::fviz_dend(clus1, cex = 0.4, k = 5)
+
+#looks like 5 groups makes sense? 2 could work as well 
+
+```
+
+Continue to look at clustering results by calculating the gap statistic to find 
+```{r}
+
+#gap statistic- "goodness of clustering"/optimal k value
+#use the 1-SE method to find point at which gap stat slows down (firstSEmax),  ie selects smallest k within 1 se of the global max
+
+clgp <- clusGap(bugcal.pa, FUN = hcut, method = 'firstSEmax', K.max = 20, B=25)
+
+#visualize gap statistic
+fviz_nbclust(bugcal.pa, FUN = hcut, method = "gap", k.max = 20, nboot = 25)
+#suggests 6-9 groups but no real clear distinction
+
+#Using 6 groups to balance parsimony and complexity
+#can try using higher bootstrapping to see how stable this is
+
+```
+
+Other clustering selection methods
+
+```{r}
+
+#elbow method - plot wss against cluster groups and see where the decrease  "slows down"
+fviz_nbclust(bugcal.pa, FUN = hcut, method = "wss", k.max = 15) #minimizes within cluster sum squares 
+#inconclusive, looks like anywhere from 5-9
+
+#silhouette score, ranges from -1 to 1 and says how far apart from one another the clusters are. 1/-1 means they are easily distinguished from one another
+fviz_nbclust(bugcal.pa, FUN = hcut, method = "silhouette", k.max = 15)
+#width is low in this plot, groups aren't different from one another and it looks like 2 is optimal k
+
+```
+PCA to see which groups are most important
+```{r}
+
+#PCA script from statquest demo: https://github.com/StatQuest/pca_demo/blob/master/pca_demo.R
+#dimensionality reduction techniques, like PCA to see which groups are the most imp.
+
+pca <- prcomp(bugcal.pa, scale = FALSE)
+
+#x has the principal components
+#first pc accounts for the most variation in the data 
+plot(pca$x[,1], pca$x[,2])
+
+#use sdev2 to calc how much variation in the original data each pc accounts for
+pca.var <- pca$sdev^2
+#calc percentages
+pca.var.per <- round(pca.var/sum(pca.var)*100, 1)
+ 
+#plot percentages of which account for the most variation in the data
+barplot(pca.var.per, main="Percent Variation each Component Accounts for in the Data", xlab="Principal Component", ylab="Percent Variation")
+
+#look at pc1 and pc2 to see how much they account for variation within the data
+pca.data <- data.frame(Sample=rownames(pca$x),
+  X=pca$x[,1],
+  Y=pca$x[,2])
+
+ggplot(data=pca.data, aes(x=X, y=Y, label=Sample)) +
+  geom_text() +
+  xlab(paste("PC1 - ", pca.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca.var.per[2], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Graph")
+#looks like two separate groups 
+
+#loading scores to see which components are most important
+loading_scores <- pca$rotation[,1]
+var_scores <- abs(loading_scores) ## get the magnitudes
+var_score_ranked <- sort(var_scores, decreasing=TRUE) #sort high to low
+top_10 <- names(var_score_ranked[1:10]) #get names for top 10 
+ 
+pca$rotation[top_10, 1] 
+
+
+```
+
+
+Prune the dendrogram to create a small number of groups
+
+Level pruning can be done by specifying the number of groups (k parameter) or can prune at a specified height. See cutree help, result is a vector of site group assignments. 
+
+Can repeat this process to generate several candidate groupings from a single dendrogram
+
+```{r}
+
+grps_6 <- cutree(clus1, k=6)
+
+table(grps_6) #count number of sites in each group 
+
+grp <- cbind(row.names(bugcal.pa),grps_6) #list of calibration sites and their group assignments
+
+#Can get the site Ids for the members of cluster 1, 2, 3 etc if needed
+rownames(bugcal.pa)[grps_6 == 4]
+
+```
+
+### STEP 2.5 Multivariate regression splines ##
+
+????
+```{r}
+#multivariate regression splines... 
+model <- earth::earth(x = predall, y = bugall)
+
+testbug <- alldata %>% 
+  filter(Status == "Test")  %>% 
+  select(-c(inundation, slope, airtemp,precip, sand, evapotransp, elevation, wetlands, protectedarea,silt, orgcarbon, snowcover, runoff, discharge, Latitude.x, Longitude.x, Status, Province, Sample_year, Latitude.y, Longitude.y, Sample_richness) ) %>%
+  column_to_rownames("Sample_ID")
+
+
+testpred <- alldata %>%
+  filter(Status == "Test") %>%
+  select(c(inundation, slope, airtemp,precip, sand, evapotransp, elevation, wetlands, protectedarea,silt, orgcarbon, snowcover, runoff, discharge ))
+
+modpred <- stats::predict(model, newdata = testpred )
+
+modpred <- as.data.frame(modpred)
+
+#find differences between known test data and model predictions of test data
+modpred - testbug
+```
+
+###STEP 2.75 BRT ###
+
+```{r}
+library(dismo)
+
+gbm.step( gbm.x= 2:23, gbm.y = 24:50, data = alldata)
+
+
+```
+
+#### STEP 2.80 RF REGRESSION MODEL - look at how 
+
+```{r}
+#tidy data to get spp richness column
+
+bugall_richness <- bugall %>%
+    mutate(spp_richness = rowSums(across(where(is.numeric)))) %>%
+    select(spp_richness)
+
+#merge so have spp richness and predictors
+richness_pred <- merge(bugall_richness, predall) #, by = 'row.names'
+
+rf_reg_model <- randomForest(spp_richness ~ ., data=richness_pred, ntree=300, importance=TRUE, norm.votes=TRUE, keep.forest=TRUE)
+
+#msr is 137 - average of the difference between the actual and estimated values. This is quite high. Overestimating by 137...
+
+#% of variance explained is -.35 - similar to the r2 value. 34% of the variability in spp richness is explained by the predictor variables. It's a measure of how well the oob predictions explain the variance of the training set. unexplained variance is due to lack of fit or random behavior 
+
+varImpPlot(rf_reg_model) 
+
+#next can try removing predictors that contribute the most to the mse.
+```
+
+#### STEP 3 . BUILD RANDOM FOREST MODEL TO PREDICT GROUP MEMBERSHIP;####
+# First, put the group IDs and predictor variables into a single data frame;
+```{r}
+
+candvar<-c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")
+
+#smaller set of autocorrelated variables removed - just one from each pair
+candvar <- c('orgcarbon', 'protectedarea', 'slope', 'runoff', 'silt', 'elevation', 'wetlands', 'airtemp', 'inundation')
+
+rfdat <- data.frame(predall[,candvar],Groups=grps_6) #change to predcal data only
+
+rfdat$Groups <- factor(rfdat$Groups)
+
+```
+
+
+# Build Random Forest (RF) 
+
+```{r}
+?randomForest()
+
+rf.mod <- randomForest(Groups ~ ., data=rfdat, ntree=500, importance=TRUE, norm.votes=TRUE, keep.forest=TRUE)
+
+print(rf.mod)   #Displays out-of-bag (OOB) error matrix. Columns are predicted class, rows are true class
+
+```
+
+various diagnostics
+
+```{r}
+
+varImpPlot(rf.mod)  #plots 2 measures of predictor importance;
+#Note that all candidate predictors are used in a RF model.;
+
+#how imp they are - can get rid of ones that aren't important and then see if makes model the better or worse 
+```
+
+#For key predictors, useful to look at partial dependence plots. 
+#Following example is the role of the predictor "slope", in predicting the various site groups; 
+
+```{r}
+
+#partial dependence plot shows the probability of success on y axis (p=predicted probability of being in that group). Where line drops means this is where the probability of successful prediction of group membership drops off, ie predicting membership for group 1 using inundation drops off around 70 
+
+sapply(unique(rfdat$Groups),function(grp){
+  partialPlot(rf.mod,pred.data=rfdat,x.var="inundation",which.class=grp,main=paste("Group ",grp))})
+
+
+```
+####STEP 4 - Save the final RF predictive model, for future use####
+
+To specify the entire, final RF model, you need to store 4 things as an R object:
+
+
+```{r}
+#4.1) The site-by-taxa matrix of observed presence/absence at calibration sites (bugcal.pa, already available) 
+
+
+
+#4.2) Specify the vector of final group membership assignments at calibration sites(grps.final);
+grps.final<- grps_6
+# 4.3) Specify the final predictor variables
+preds.final<-candvar
+# 4.4) The final RF model (rfmod)
+
+
+```
+
+
+Save the model components together in a single .Rdata file. Any R user can load this file, along with model.predict.RF.r, to make predictions from the model
+```{r}
+
+save(bugcal.pa, predcal, grps.final, preds.final, rf.mod, file='My.RF.Model.Version1.Rdata');
+
+#NOTE - Predcal is not needed to define the model, but is included so that users see the required format for predictor data
+
+```
+
+####Step 5 - Further checks on performance of the final, chosen model####
+
+#Option 5.1 - Make predictions of E and O/E (observed/expected) for calibration (reference) sites. Examine O/E statistics and plots;
+To do this, run the model.predict.RanFor.4.2 function, using the calibration data as the 'new' data;
+See Step 7 below, for more info on making predictions;
+Also see internal documentation of model.predict.Ran.For.4.2;
+```{r}
+
+source("model.predict.RanFor.4.2.r"); #assume this is the rivpacs script 
+# Two options, for calibration data;
+# Option 1 - Set Cal.OOB=TRUE, for out-of-bag predictions (see Cutler et.al). Gives more realistic (larger) SD(O/E), appropriate for new data; 
+
+OE.assess.cal <- model.predict.RanFor.4.2(bugcal.pa, grps.final, preds.final, ranfor.mod=rf.mod,prednew=predcal,bugnew=bugcal.pa,Pc=0.5,Cal.OOB=TRUE)
+
+#oob true
+
+```
+
+# Option 2 - Set Cal.OOB=FALSE, for in-bag predictions. Gives optimistically small SD(O/E), because RF models are tightly tuned to in-bag calibration data;
+
+```{r}
+
+OE.assess.cal <- model.predict.RanFor.4.2(bugcal.pa, grps.final, preds.final, ranfor.mod = rf.mod, prednew=predcal, bugnew = bugcal.pa, Pc=0.5, Cal.OOB=FALSE)
+
+#oob false
+
+#if pred model and null aren't diff then don't use groups
+
+```
+
+look at other prediction results, for calibration sites;
+
+```{r}
+
+names(OE.assess.cal);   #names of 2 components of the prediction results list;
+head(OE.assess.cal$OE.scores); #data frame of O/E scores, 1st 5 rows;
+head(OE.assess.cal$Capture.Probs); #predicted capture probabilties;
+head(OE.assess.cal$Group.Occurrence.Probs); #predicted group occurrence probabilities, 1st 5 rows
+
+```
+
+check distribution of Calibration-site O/E scores. Is it Normal? 
+plot a histogram and a Normal q-q plot
+```{r}
+
+par(mfrow=c(2,1));
+hist(OE.assess.cal$OE.scores$OoverE,xlab="O/E");
+qqnorm(OE.assess.cal$OE.scores$OoverE);
+
+#shows if residuals are normal?
+```
+
+scatterplot of O (on y-axis) vs E (on x-axis). See Pineiro et al. Ecol. Modelling 2008, 316-322, for this choice of axes;
+
+```{r}
+
+par(mfrow=c(1,1));
+plot(OE.assess.cal$OE.scores[,c('E','O')],xlab='Expected richness',ylab='Observed richness');
+abline(0,1); #add a 1-1 line
+
+#unclear how to interpret
+
+```
+
+
+### Option 5.2 - Repeat Step 5.1, but this time use validation data. Check especially for model bias (mean(O/E) differs from 1.0);
+```{r}
+
+OE.assess.vld <- model.predict.RanFor.4.2(bugcal.pa,grps.final,preds.final, ranfor.mod=rf.mod,prednew=pred.vld,bugnew=bug.vld.pa,Pc=0.5,Cal.OOB=FALSE)  ;
+OE.assess.vld$OE.scores;
+
+hist(OE.assess.vld$OE.scores$OoverE,xlab="O/E");
+qqnorm(OE.assess.vld$OE.scores$OoverE);
+
+plot(OE.assess.vld$OE.scores[,c('E','O')],xlab='Expected richness',ylab='Observed richness');
+abline(0,1); #add a 1-1 line;
+
+#make sure it's not over 1, should be same as above
+```
+
+#From here down should be a script for communities to use, but add all of the tests in 
+
+#for new sites - make this into a script for communities, use our Test data as an example and they substitute own sites/data 
+
+#predict script
+#final model
+#their data in a presence-absence matrix
+#the habitat data for the variables we decided upon
+
+####START HERE for testing against completed RIVPACS model####
+
+# Step 7 - Making predictions for new data, using random forests;.
+```{r}
+
+library(Hmisc);
+library(randomForest);
+
+```
+
+```{r}
+
+# first, source the prediction script and also load the desired model;
+source("model.predict.RanFor.4.2.r") 
+load('My.RF.Model.Version1.Rdata')
+
+```
+
+```{r}
+
+```
+
+
+# User must supply a sample-by-taxa matrix of taxon abundance or else presence/absence (coded as 1 or 0), for all new samples;
+# User must also supply a corresponding file of predictor (habitat) data for those same samples;
+# These 2 files should have similar formats as the original taxa and predictor data sets used to build the model (see step 1 above);
+# Notes on format --
+#   A) The sample ID column in both files should be read into R as a row name (see Step 1 examples).
+#   B) Predictor data set -- Must include columns with the same names, units, etc.,
+#        as the model's predictor variables. All other columns will be ignored;
+#        Column order does not matter;
+#        Predictions and calculations of O/E (observed/expected) will be made only for those samples that have;
+#        complete data for all model predictors.;
+#   C)  Sample-by-taxa matrix. Can contain abundance or presence/absence (1 or 0). Missing or empty cells now (?) allowed;
+#       Sample ID's (row names) must match those of predictor data.
+#       Any names for new taxa (column names) are acceptable, in any order;
+#       HOWEVER - Only those new-data taxa names that match the names in the
+#            calibration data can be use to calculate observed richness;
+#            All other taxa (columns) in the new-data bug matrix are ignored;
+#        To see a list of the calibration-taxa names, do:
+names(bugcal.pa)[colSums(bugcal.pa)>0];
+
+##########;
+
+# Example predictions: For nonreference sites (adjust for "your dataset name.csv"; add full path name if not using a project)
+
+```{r}
+predall<-read.csv("habitat_all.csv", row.names="Sample_ID", header=T)
+bugall<-read.csv("benthic_all.csv", row.names="Sample_ID", header=T)
+bugall.pa<-bugall;
+bugall.pa[bugall.pa>0]<-1;
+```
+
+
+```{r}
+pred.test<-predall[as.character(predall[,'CalVal'])=='T',];  #predictor data - test sites;
+bug.test.pa<-bugall.pa[as.character(predall[,'CalVal'])=='T',]; #Bug presence/absence matrix, test sites;
+```
+
+#Drop all samples/sites that do not not have complete data for the model predictors
+
+```{r}
+pred.test<-pred.test[complete.cases(pred.test[,preds.final]),];
+bug.test.pa<-bug.test.pa[row.names(pred.test),];
+```
+
+#makes predictions for test data;
+
+```{r}
+
+OE.assess.test<-model.predict.RanFor.4.2(bugcal.pa,grps.final,preds.final,ranfor.mod=rf.mod,prednew=pred.test,bugnew=bug.test.pa,Pc=0.5,Cal.OOB=FALSE);
+
+```
+
+# look at O/E scores, for all samples;
+```{r}
+OE.assess.test$OE.scores;
+
+```
+
+################ ;
+
+#unsure if I have this script?
+
+## Assessing individual sites;
+source("assess.one.sample.4.1.r")
+#This function assesses a single site or sample from a new (test) data set to which
+# model.predict.RanFor.4.2() has already been applied.
+# assess.one.sample() compares observed occurrences with the model-predicted probabilities of occurrence for all taxa;
+
+#Input parameters are:
+#       case -- A selected site or sample ID, for which a prediction has already been made using model.predict.v4(). ;
+# result.prd -- Output of model.predict.RanFor.4.1() for new samples that include the chosen case;
+# bugnew  -- Sample-by-taxa matrix of new samples that was submitted to model.predict.RanFor.4.1.().
+# Pc -- Cutoff for capture probabilties for inclusion of taxa in O/E;
+
+#The function produces a data frame with one row for each taxon, and the following columns:
+# observed presence(1) or absence(0);
+# predicted capture probability;
+# Big.diff = "Yes", if there is a big difference (>=0.5 in magnitude) between observed and predicted;
+# In.OtoE = "Yes" if the taxon would be included in the O/E calculation for this sample, given the stated value of Pc;
+
+#By default, the function prints out the results data frame with its rows(taxa) sorted by the magnitude of (observed-predicted),
+# as suggested in Van Sickle, J. (2008), JNABS 27:227-235;
+#However, see below for other sorting possibilties;
+
+#Example usage (case = "site name"):
+site1.result<-assess.one.sample.4.1(case="ATLCBNB_03_2016_1",result.prd=OE.assess.test, bugnew=bug.test.pa, Pc=0.5);
+# Alternative display is to sort the taxa by their predicted occurrence probabilities;
+site1.result[order(site1.result$predicted,decreasing=TRUE),];
+# Another alternative is to sort alphabetically by taxon name;
+site1.result[order(row.names(site1.result)),];
+
+## End of model build and prediction examples;
+
+
+
+
+
+
+
+
+
