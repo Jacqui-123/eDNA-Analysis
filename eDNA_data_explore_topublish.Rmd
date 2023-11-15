@@ -1,0 +1,1035 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Data Exploration of eDNA data for model-building
+
+This dataset contains presence/absence data for 186 freshwater invertebrate taxa, from eDNA samples collected in watersheds around the Atlantic Region of Canada. Sites are split into reference sites and test sites, where reference sites are areas with lower impact from human influence, while test sites are more human-influenced, with a combination of land use that could drive ecosystem changes, like nearby agriculture, foresty, or roads. The goal of this data set is build a predictive model to estimate watershed health for new sites within the region.
+
+The data were explored here to unpack patterns and insights relating to taxa richness and percent of ept taxa, as well as exploring the relationship between environmental stressors and species communities between test and reference sites. 
+
+5 different excel files were used for this data. Sites were aligned by sample number and large river sites were removed from this analysis. 
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(psych)
+library(knitr)
+library(gridExtra)
+library(reshape2)
+library(grid) 
+library(gtable)
+library(shiny)
+library(kableExtra)
+library(pander)
+
+```
+
+
+```{r , echo = FALSE}
+#data loading, tidying and merging. 
+
+edna_benthic <- read.csv("21072022_eDNA genera.csv") #invert data
+
+edna_benthic <- edna_benthic %>%
+    mutate(Sample_ID = toupper(Sample_ID)) %>%
+  arrange(desc(Sample_ID))
+
+meta <- read.csv("21072022_eDNA sample metadata.csv") #metadata
+
+meta <- meta %>%
+  mutate(Sample_ID = toupper(Sample_ID_UPDATED)) %>%
+  select(-c(Sample_ID_ORIGINAL, Sample_ID_UPDATED)) %>%
+    arrange(desc(Sample_ID))
+
+#all.equal(edna_benthic$Sample_ID, meta$Sample_ID) #should return true
+
+#merge benthic data and meta data 
+edna_meta_benth <- merge(meta, edna_benthic, on = "Sample_ID") 
+
+#habitat data
+habitat_allvars <- read.csv("habitat_lv12_RIVPACS.csv", header = FALSE)
+colnames(habitat_allvars) <- paste(habitat_allvars[1,], habitat_allvars[2,], sep = '_' )
+habitat_allvars <- habitat_allvars[-c(1,2),]
+
+habitat_allvars <- habitat_allvars%>%
+  rename( 'Sample_ID' ='Sample_ID_') %>%
+  mutate(Sample_ID = toupper(Sample_ID)) %>%
+  arrange(desc(Sample_ID))
+
+alldata  <- merge(habitat_allvars, edna_meta_benth, by = "Sample_ID")
+alldata <- alldata[!grepl('SJR', alldata$Sample_ID),]
+
+#rename columns in alldata to make them easier to read 
+
+alldata <- alldata %>% 
+  rename('Taxa_richness' = 'Sample_richness',
+          'discharge' = 'dis_m3_pyr_Discharge_Av_annual_m3' ,
+         'runoff' = "run_mm_syr_Runoff_Annual_av_mm",
+         'inundation' = 'inu_pc_ult_Inundation_perc_up_longtermmax',
+         'elevation' = 'ele_mt_uav_Elevation_av_up',
+         'slope' = 'slp_dg_uav_Slope_terrain_av_up',
+         'airtemp' = 'tmp_dc_uyr_Airtemp_av_up' ,
+         'precip'  = 'pre_mm_uyr_Precip_ann_av_up',
+        'evapotransp' =  'aet_mm_uyr_ActualEvapo_ann_av_up',
+        'snowcover' = 'snw_pc_uyr_Snowcover_ann_av_up',
+        'wetlands' = 'wet_pc_ug2_Wetland_extent_up_g2', 
+        'protectedarea' = 'pac_pc_use_Protected_area_up',
+        'silt'=  'slt_pc_uav_Siltfraction_av_up',
+        'sand' ='snd_pc_uav_Sandfraction_av_up',
+        'orgcarbon' = 'soc_th_uav_Soil_orgcarbon_av_up',
+        'agriculture' = 'crp_pc_use_Cropland_extent_up') 
+
+#alldata %>% select(starts_with('glc_pc_u16_'))
+
+```
+
+
+# Part 1: Exploring Taxa Richness
+
+### Basic summary statistics to explore taxa richness
+
+At first glance, the two different groups look very similar, with similar means, medians and standard errors. Since the mean and median are so similar for both groups, it's likely that this sample is normally distributed
+
+```{r, echo = FALSE, results='asis'}
+#ref sites
+df_ref <- alldata %>% filter(Status == 'Reference')
+descriptive_stats <- psych::describe(df_ref$Taxa_richness)
+descriptive_stats <- as.data.frame(descriptive_stats)
+descriptive_stats <- round(descriptive_stats, 1)
+tble_ref <- descriptive_stats %>%
+pivot_longer(cols = vars:se, names_to = 'Summary_Stats', values_to = 'Values') %>%
+  filter(Summary_Stats %in% c('n', 'mean', 'sd', 'median', 'min', 'max', 'range', 'skew', 'kurtosis', 'se')) %>%
+  rename( 'Reference Site Values' = 'Values')
+
+#test sites
+df_test <- alldata %>% filter(Status == 'Test')
+descriptive_stats <- psych::describe(df_test$Taxa_richness)
+descriptive_stats <- as.data.frame(descriptive_stats)
+descriptive_stats <- round(descriptive_stats, 1)
+
+tble_test <- descriptive_stats %>%
+pivot_longer(cols = vars:se, names_to = 'Summary_Stats', values_to = 'Values') %>%
+  filter(Summary_Stats %in% c('n', 'mean', 'sd', 'median', 'min', 'max', 'range', 'skew', 'kurtosis', 'se')) %>%
+  rename( 'Test Site Values' = 'Values') 
+
+merge_stats <- merge(tble_ref, tble_test, on = "Summary_Stats") %>% rename("Summary Stats" = "Summary_Stats")
+
+#note - kable & latex won't render tables in order, need to try pander instead
+#results
+#kable(tble_test, format = 'markdown', caption = "Descriptive statistics for taxa richness across all test sites for eDNA data.") 
+#results
+#kable(tble_ref, caption = " Descriptive statistics for taxa richness across reference sites for eDNA data.")
+
+#knitr::kable(list(tble_ref,tble_test),format = 'markdown',
+ # caption = 'Summary statistics for test and reference sites ',
+  #booktabs = TRUE, valign = 't')
+```
+
+```{r, echo = FALSE, results='asis'}
+#cat("Reference/Test Sites:\n\n")
+pander(merge_stats, style = 'simple')
+
+```
+
+
+### Count of Taxa Richness for Reference & Test Sites
+
+```{r, echo = FALSE}
+
+p1 <- ggplot(df_ref, aes(x=Taxa_richness)) +
+geom_histogram(binwidth = 1, col = 'black', fill = 'lightblue') +
+  theme_bw() +
+  ylab("Number of Species") +
+  xlab("Sample Richness (bin size = 1)") +
+    ylim(0,15) +
+  ggtitle("Distribution of Taxa Richness \nfor Reference Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+p2 <- ggplot(df_test, aes(x=Taxa_richness)) +
+geom_histogram(binwidth = 1, col = 'black', fill = 'orange') +
+  theme_bw() +
+  ylab("Number of Species") +
+  xlab("Sample Richness (bin size = 1)") +
+  ylim(0,15) +
+  ggtitle("Distribution of Taxa Richness \n for Test Sites") +
+    theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+grid.arrange(p1, p2, ncol=2)
+
+```
+ 
+Visualizing the distribution of the count of taxa richness confirms this: the data appear pretty normally distributed and without large differences between test and reference sites. 
+
+However there could be more differences underneath the surface. There are 186 different species in this study, and over 200 different sites for each category (test and reference sites). Do the same species appear at all test sites? How about all reference sites? And how about looking at the groups of species, and how they cluster together, (termed the "species communities" in ecoloyg). Are there groups of species present that are more sensitive to human influence? This is explored in the rest of the analysis. 
+
+
+ 
+```{r, echo = FALSE, include = FALSE}
+## Sum of Taxa Occurrences for Individual Species for Reference & Test Sites
+
+#reference sites
+df_ref_spp <- df_ref %>%
+  select(Ablabesmyia:Xenochironomus) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_Taxa' = '.' ) %>%
+  arrange(sum_of_Taxa) 
+  
+pr <- ggplot(df_ref_spp, aes(x=sum_of_Taxa)) +
+geom_histogram(binwidth = 1, col = 'black', fill = 'lightblue') +
+  theme_bw() +
+  ylab("Count") +
+  xlab("Sum of occurrences of Taxa (bin size = 1) ") +
+  scale_y_continuous(limits = c(0,10), breaks = seq(0,10, by = 1))+
+  ggtitle("Count of Taxa Occurrences \n for Reference Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+#test sites
+df_test_spp <- df_test %>%
+  select(Ablabesmyia:Xenochironomus) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_Taxa' = '.' ) %>%
+  arrange(sum_of_Taxa)
+
+pt <- ggplot(df_test_spp, aes(x=sum_of_Taxa)) +
+geom_histogram(binwidth = 1, col = 'black', fill = 'orange') +
+  theme_bw() +
+  ylab("Count") +
+  xlab("Sum of occurrences of Taxa (bin size = 1) ") +
+  scale_y_continuous(limits = c(0,10), breaks = seq(0,10, by = 1))+
+  ggtitle("Count of Taxa Occurrences \n for Test Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+
+grid.arrange(pr, pt, ncol = 2)
+grid.text("Frequency distribution of the sum of taxa occurrences for all reference and test sites. The x axis has the sum of individual taxa observed across all sites, and the y axis is the number of times that a taxa was observed that many times. For example, for test sites there is one taxa that occurred > 160 times. ", x = 0.5, y = -0.1, just = 'centre')
+
+#These histograms show the frequency of the sum of taxa occurrences for each species. This was calculated by summing up the number of occurrences of each distinct taxa across all sites (grouped by reference/test sites). The x axis shows the sum of occurrences of taxa, and the y axis is the frequency or count of taxa for every bin listed on the x axis. For example, for test sites there is one taxa that occurred > 160 times. 
+
+#Again, both test and reference sites appear to have a similar amount of occurrences but it's unclear if this varies by species.
+```
+
+
+```{r, echo = FALSE, message = FALSE, results = "hold" }
+#reference sites 
+#top and bottom 5% of taxa 
+topr <- quantile(df_ref_spp$sum_of_Taxa, 0.95)
+bottomr <- quantile(df_ref_spp$sum_of_Taxa, 0.05)
+
+#top 5% taxa names
+df_reftop <- df_ref_spp %>%
+  filter(sum_of_Taxa >= topr) %>%
+  arrange(desc(sum_of_Taxa))
+
+#bottom 5% taxa names
+df_refbot <- df_ref_spp %>%
+  filter(sum_of_Taxa <= bottomr) %>%
+  arrange(desc(sum_of_Taxa))
+
+#knitr::kable(
+  #list(df_reftop,df_refbot ),
+  #caption = 'Top and bottom 5 percent of observed Taxa for reference sites ',
+  #booktabs = TRUE, valign = 't' )
+
+```
+
+
+# Part 2: Exploring the species that make up taxa richness
+
+The most and least common species (from the 95th and 5th quantiles) were graphed below. The taxa in the following graphs are the most and least common species, for reference and test sites. 
+
+So far, nothing jumps out - it doesn't seem easy to see if there are any patterns here between the most and least common species across test and reference sites. There are some species that appear a few times between these two sites, but it's not clear if this is a meaningful pattern. 
+
+
+```{r, echo = FALSE, message = FALSE, fig.height= 3 }
+df_reftop <- df_reftop %>% rename("Occurrences" = "sum_of_Taxa")
+
+p <- ggplot(df_reftop, aes(x = Occurrences, y = Taxa)) +
+  geom_bar(stat = 'identity', fill = "lightblue") +
+  theme_bw() +
+ ylab(" ") +
+  xlab("Number of Occurrences") +
+  ggtitle("Most Common Species \nfor Reference Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+df_refbot <- df_refbot %>% rename("Occurrences" = "sum_of_Taxa")
+
+q <- ggplot(df_refbot, aes(x = Occurrences, y = Taxa)) +
+  geom_bar(stat = 'identity', fill = "lightblue") +
+  theme_bw() +
+ ylab(" ") +
+  xlim(0, 150) +
+  xlab("Number of Occurrences") +
+  ggtitle("Least Common Species \nfor Reference Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+grid.arrange(q, p, ncol = 2)
+ 
+```
+
+
+
+```{r, echo = FALSE, message = FALSE}
+#top and bottom 5% of taxa for test sites 
+#test sites 
+#top and bottom 5% of taxa 
+topt <- quantile(df_test_spp$sum_of_Taxa, 0.95)
+bottomt <- quantile(df_test_spp$sum_of_Taxa, 0.05)
+
+#top 5% taxa names
+df_testtop <- df_test_spp %>%
+  filter(sum_of_Taxa >= topt) %>%
+  arrange(desc(sum_of_Taxa))
+
+#bottom 5% taxa names
+df_testbot <- df_test_spp %>%
+  filter(sum_of_Taxa <= bottomt) %>%
+  arrange(desc(sum_of_Taxa))
+```
+
+
+```{r, echo = FALSE, message = FALSE, fig.height= 3}
+
+o <- ggplot(df_testbot, aes(x = sum_of_Taxa, y = Taxa)) +
+  geom_bar(stat = 'identity', fill = "orange") +
+  theme_bw() +
+ ylab(" ") +
+    xlim(0, 180) +
+  xlab("Number of Occurrences") +
+  ggtitle("Least Common Species \nfor Test Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+
+s <- ggplot(df_testtop, aes(x = sum_of_Taxa, y = Taxa)) +
+  geom_bar(stat = 'identity', fill = "orange") +
+  theme_bw() +
+ ylab(" ") +
+  xlim(0, 180) +
+  xlab("Number of Occurrences") +
+  ggtitle("Most Common Species \nfor Test Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+grid.arrange(o, s, ncol = 2)
+
+```
+
+
+```{r, echo = FALSE}
+#Sum of total taxa occurrences, test vs ref sites 
+
+#data combination
+#add in column for test vs reference sites 
+df_test_spp <- df_test_spp %>% rename('sum_of_taxa_test' = "sum_of_Taxa") %>% arrange('Taxa')
+df_ref_spp <- df_ref_spp %>% rename("sum_of_taxa_ref" = "sum_of_Taxa") %>% arrange('Taxa')
+
+#join data together 
+df_joined_sum_occ <- left_join(df_ref_spp, df_test_spp, by = "Taxa" )
+
+#add in order 
+taxa_orders <- read.csv("eDNA_EPT_taxa.csv") %>% rename("Order" = "Order.", "Taxa" = "Genus", "is_EPT" = "EPT..y.n.") 
+
+taxa_orders_sum <- left_join(df_joined_sum_occ, taxa_orders, by = "Taxa")
+
+```
+
+
+```{r, echo = FALSE, include = FALSE}
+
+ggplot(taxa_orders_sum, aes(y = sum_of_taxa_test, x = sum_of_taxa_ref, color = Order)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dotted") +
+    theme_bw() +
+  viridis::scale_color_viridis(discrete = TRUE) +
+ ylab('Sum of Taxa Occurrences for all Test Sites') + 
+   xlab('Sum of Taxa Occurrences for all Reference Sites') +
+  ggtitle("Sum of Taxa Occurrences, \n Reference vs Test Sites") +
+      theme(plot.title = element_text(hjust = 0.5, size = 12)) +
+  theme(legend.key.height =  unit(.4, "cm"))
+
+```
+ 
+
+```{r , fig.height = 10, echo = FALSE, include = FALSE}
+
+## Sum of total taxa occurrences across all reference and test sites:
+
+#plots of indicator taxa, part 1 (taxa separated by about halfway for easier graphing)
+
+df_ref_indicators <- alldata %>%
+  filter(Status == 'Reference') %>%
+      select(Ablabesmyia:Lymnaea) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_Taxa' = '.' ) %>%
+  arrange(Taxa)
+
+
+df_test_indicators <- alldata %>%
+  filter(Status == 'Test') %>%
+    select(Ablabesmyia:Lymnaea) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_Taxa' = '.' ) %>%
+  arrange(Taxa)
+
+
+r <- ggplot(df_ref_indicators, aes(x= sum_of_Taxa, y =Taxa, fill = 'lightblue')) +
+  geom_bar(stat = 'identity') +
+  theme_bw() +
+  xlab('Sum of occurrences') +
+  ylab('') +
+  ggtitle('Reference Sites') +
+  theme(plot.title = element_text(hjust = 0.5, size = 10)) +
+  theme(axis.text.x = element_text(size = 7)) +
+  scale_fill_manual(values = 'lightblue') +
+  guides(fill = 'none') +
+  scale_y_discrete(limits=rev)
+
+
+t <- ggplot(df_test_indicators, aes(x= sum_of_Taxa, y =Taxa, fill = 'orange')) +
+  geom_bar(stat = 'identity') +
+  theme_bw() +
+  xlab('Sum of occurrences') +
+  ylab('') +
+  ggtitle('Test Sites') +
+  theme(plot.title = element_text(hjust = 0.5, size = 10)) +
+    theme(axis.text.x = element_text(size = 7)) +
+  scale_fill_manual(values = 'orange') +
+  guides(fill = 'none') +
+scale_y_discrete(limits=rev)
+
+
+grid.arrange(r, t, ncol = 2)
+#grid.text("Sum of occurrences of select taxa occurrences across all reference and test sites. ", x = 0.5, y = -0.1, just = 'centre')
+
+```
+
+
+```{r , fig.height = 10, echo = FALSE, include=FALSE}
+#plots of indicator taxa, part 2
+
+df_ref_indicators <- alldata %>%
+  filter(Status == 'Reference') %>%
+      select(Maccaffertium:Xenochironomus) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_Taxa' = '.' ) %>%
+  arrange(Taxa)
+
+
+df_test_indicators <- alldata %>%
+  filter(Status == 'Test') %>%
+      select(Maccaffertium:Xenochironomus) %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_Taxa' = '.' ) %>%
+  arrange(Taxa)
+
+
+r <- ggplot(df_ref_indicators, aes(x= sum_of_Taxa, y =Taxa, fill = 'lightblue')) +
+  geom_bar(stat = 'identity') +
+  theme_bw() +
+  xlab('Sum of occurrences') +
+  ylab('') +
+  ggtitle('Reference Sites') +
+  theme(plot.title = element_text(hjust = 0.5, size = 10)) +
+  theme(axis.text.x = element_text(size = 7)) +
+  scale_fill_manual(values = 'lightblue') +
+  guides(fill = 'none') +
+  scale_y_discrete(limits=rev)
+
+
+t <- ggplot(df_test_indicators, aes(x= sum_of_Taxa, y =Taxa, fill = 'orange')) +
+  geom_bar(stat = 'identity') +
+  theme_bw() +
+  xlab('Sum of occurrences') +
+  ylab('') +
+  ggtitle('Test Sites') +
+  theme(plot.title = element_text(hjust = 0.5, size = 10)) +
+    theme(axis.text.x = element_text(size = 7)) +
+  scale_fill_manual(values = 'orange') +
+  guides(fill = 'none')+
+  scale_y_discrete(limits=rev)
+
+grid.arrange(r, t, ncol = 2)
+#grid.text("Sum of occurrences of select taxa occurrences across all reference and test sites. ", x = 0.5, y = -0.1, just = 'centre')
+
+```
+
+
+The percent of "EPT" taxa for test and reference sites was assessed, to begin to see if there are any obvious differences in species communities. EPT taxa are those that belong to the orders Ephemeroptera, Plecoptera, and Trichoptera. They were chosen because these are often useful bioindicator taxa, meaning that they can be more sensitive to human influence. These were further broken down by looking specifically at the percent of taxa that belong to the Plecoptera order, as this order contains even more sensitive species. 
+
+```{r, echo = FALSE, include = FALSE}
+#getting percent ept, percent Plecoptera, and environmental variables for Brianna to map
+
+#all EPT taxa
+allept <- alldata %>%
+select("Sample_ID",'Acentrella', 'Acerpenna', 'Acroneuria', 'Agapetus', 'Agarodes', 'Agnetina', 'Allocapnia', 'Alloperla', 'Ameletus', 'Amphinemura', 'Apatania', 'Arctopsyche', 'Baetis', 'Baetisca', 'Brachycentrus', 'Caenis', 'Centroptilum', 'Ceraclea', 'Ceratopsyche', 'Cheumatopsyche', 'Chimarra', 'Cinygmula', 'Dannella', 'Diphetor', 'Diplectrona', 'Dolophilodes', 'Drunella', 'Epeorus', 'Ephemera', 'Ephemerella', 'Eurylophella', 'Glossosoma', 'Goera', 'Habrophlebia', 'Habrophlebiodes', 'Haploperla', 'Helicopsyche', 'Heptagenia', 'Hydatophylax', 'Hydropsyche', 'Hydroptila', 'Isogenoides', 'Isonychia', 'Isoperla', 'Iswaeon', 'Lepidostoma', 'Leptophlebia', 'Leucrocuta', 'Leuctra', 'Maccaffertium', 'Micrasema', 'Mystacides', 'Nectopsyche', 'Nemoura', 'Neoperla', 'Neophylax', 'Neureclipsis', 'Nyctiophylax', 'Oecetis', 'Oemopteryx', 'Onocosmoecus', 'Paracapnia', 'Paragnetina', 'Paraleptophlebia', 'Paranemoura', 'Parapsyche', 'Perlinella', 'Plauditus', 'Plectrocnemia', 'Polycentropus', 'Procloeon', 'Protoptila', 'Protoradema', 'Psilotreta', 'Psychoglypha', 'Psychomyia', 'Pteronarcys', 'Pycnopsyche', 'Rhithrogena', 'Rhyacophila', 'Serratella', 'Setodes', 'Siphlonurus', 'Stenacron', 'Suwallia', 'Sweltsa', 'Taenionema', 'Taeniopteryx', 'Teloganopsis', 'Triaenodes', 'Tricorythodes', 'Wormaldia') %>%
+     mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  rename("ept_sum" = 'sum') %>%
+  select('Sample_ID', "ept_sum")%>%
+  mutate('Percent_ept' = round((ept_sum/186 * 100), 2 )) 
+
+#merge enviro data and ept data
+merged_ept_enviro <- full_join(allept, alldata, by = 'Sample_ID')
+
+#plecoptera only 
+plec <- alldata %>%
+select("Sample_ID",'Acroneuria','Agnetina','Allocapnia','Alloperla','Amphinemura','Haploperla','Isogenoides','Isoperla','Leuctra','Nemoura','Neoperla','Oemopteryx','Paracapnia','Paragnetina','Paranemoura','Perlinella','Pteronarcys','Suwallia','Sweltsa','Taenionema','Taeniopteryx') %>%
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  rename("plecoptera_sum" = 'sum') %>%
+  select('Sample_ID', "plecoptera_sum") %>%
+  mutate('Percent_plecoptera' = round((plecoptera_sum/186 * 100), 2 ))%>%
+  select('Sample_ID', "Percent_plecoptera")
+
+merge_ple_ept <- full_join(plec, merged_ept_enviro, by = 'Sample_ID')
+
+#write.csv(merge_ple_ept, "eDNA_percent_ept_plec_Nov2_2023.csv")
+
+```
+
+
+```{r, include = FALSE, echo = FALSE}
+#histogram option for percent_ept or Percent_plecoptera to check for normality - leave out for now, but they look normally distributed 
+ept_ref <- merge_ple_ept %>% filter(Status == 'Reference') 
+
+ept_test <- merge_ple_ept %>% filter(Status == 'Test') 
+
+ a <- ggplot(ept_ref, aes(x=Percent_plecoptera)) +
+geom_histogram(binwidth = 1, col = 'black', fill = 'lightblue') +
+  theme_bw() +
+  ylab("Count") +
+  xlab("Percent_ept (bin size = 1)") +
+   #   ylim(c(0, 30)) +
+  ggtitle("Distribution of Taxa Richness \nfor Reference Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+ b <- ggplot(ept_test, aes(x=Percent_plecoptera)) +
+geom_histogram(binwidth = 1, col = 'black', fill = 'orange') +
+  theme_bw() +
+  ylab("Count") +
+  xlab("Percent_ept (bin size = 1)") +
+  # ylim(c(0, 30)) +
+  ggtitle("Distribution of Taxa Richness \nfor Reference Sites") +
+  theme(plot.title = element_text(hjust = 0.5, size = 10))
+ 
+ #grid.arrange(a, b, ncol=2)
+```
+
+
+```{r, echo = FALSE}
+
+#boxplot for percent ept 
+meltedept <- melt(merge_ple_ept, id.vars = 'Status', measure.vars = c('Percent_ept'))
+meltedept$value <- as.numeric(meltedept$value)
+
+c <- ggplot(meltedept, aes(x =variable, y = value, fill = Status)) +
+geom_boxplot() +
+    stat_boxplot(geom ='errorbar') + 
+    theme_bw() +
+  scale_fill_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+  ggtitle('Distribution of Percent EPT') +
+  ylab('Percent EPT') + xlab('') +
+ theme(axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()) +
+    theme(plot.title = element_text(hjust = 0.5, size = 12), legend.position = 'none')
+
+
+#boxplot for percent plecoptera
+
+meltedplec <- melt(merge_ple_ept, id.vars = 'Status', measure.vars = c('Percent_plecoptera'))
+meltedplec$value <- as.numeric(meltedplec$value)
+
+d <- ggplot(meltedplec, aes(x =variable, y = value, fill = Status)) +
+geom_boxplot() +
+    stat_boxplot(geom ='errorbar') + 
+    theme_bw() +
+  scale_fill_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+  ggtitle('Distribution of Percent Plecoptera') +
+  ylab('Percent Plecoptera') + xlab('') +
+ theme(axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()) +
+    theme(plot.title = element_text(hjust = 0.5, size = 12))
+
+grid.arrange(c,d, ncol=2)
+
+
+```
+ 
+It looks like there is a pattern here - we see that although percent EPT does not vary between test and reference sites, percent plecoptera does vary between test and reference sites. A Welch's two sample t-test was run, and this is significant at alpha = .05, and it is probably that there is a difference between the mean percent plecoptera at reference and test sites. 
+ 
+```{r, echo = FALSE}
+#graph the sum of ept richness for reference sites, and then for test sites  
+
+
+#getting total sum of ept taxa across test sites (ie not by sample ID)
+df_test_ept_sum <- df_test %>%
+  select('Acentrella', 'Acerpenna', 'Acroneuria', 'Agapetus', 'Agarodes', 'Agnetina', 'Allocapnia', 'Alloperla', 'Ameletus', 'Amphinemura', 'Apatania', 'Arctopsyche', 'Baetis', 'Baetisca', 'Brachycentrus', 'Caenis', 'Centroptilum', 'Ceraclea', 'Ceratopsyche', 'Cheumatopsyche', 'Chimarra', 'Cinygmula', 'Dannella', 'Diphetor', 'Diplectrona', 'Dolophilodes', 'Drunella', 'Epeorus', 'Ephemera', 'Ephemerella', 'Eurylophella', 'Glossosoma', 'Goera', 'Habrophlebia', 'Habrophlebiodes', 'Haploperla', 'Helicopsyche', 'Heptagenia', 'Hydatophylax', 'Hydropsyche', 'Hydroptila', 'Isogenoides', 'Isonychia', 'Isoperla', 'Iswaeon', 'Lepidostoma', 'Leptophlebia', 'Leucrocuta', 'Leuctra', 'Maccaffertium', 'Micrasema', 'Mystacides', 'Nectopsyche', 'Nemoura', 'Neoperla', 'Neophylax', 'Neureclipsis', 'Nyctiophylax', 'Oecetis', 'Oemopteryx', 'Onocosmoecus', 'Paracapnia', 'Paragnetina', 'Paraleptophlebia', 'Paranemoura', 'Parapsyche', 'Perlinella', 'Plauditus', 'Plectrocnemia', 'Polycentropus', 'Procloeon', 'Protoptila', 'Protoradema', 'Psilotreta', 'Psychoglypha', 'Psychomyia', 'Pteronarcys', 'Pycnopsyche', 'Rhithrogena', 'Rhyacophila', 'Serratella', 'Setodes', 'Siphlonurus', 'Stenacron', 'Suwallia', 'Sweltsa', 'Taenionema', 'Taeniopteryx', 'Teloganopsis', 'Triaenodes', 'Tricorythodes', 'Wormaldia') %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_ept_taxa_test' = '.' ) %>%
+  arrange(sum_of_ept_taxa_test)
+
+
+#getting total sum of ept taxa across ref sites (ie not by sample ID)
+
+df_ref_ept_sum <- df_ref %>%
+  select('Acentrella', 'Acerpenna', 'Acroneuria', 'Agapetus', 'Agarodes', 'Agnetina', 'Allocapnia', 'Alloperla', 'Ameletus', 'Amphinemura', 'Apatania', 'Arctopsyche', 'Baetis', 'Baetisca', 'Brachycentrus', 'Caenis', 'Centroptilum', 'Ceraclea', 'Ceratopsyche', 'Cheumatopsyche', 'Chimarra', 'Cinygmula', 'Dannella', 'Diphetor', 'Diplectrona', 'Dolophilodes', 'Drunella', 'Epeorus', 'Ephemera', 'Ephemerella', 'Eurylophella', 'Glossosoma', 'Goera', 'Habrophlebia', 'Habrophlebiodes', 'Haploperla', 'Helicopsyche', 'Heptagenia', 'Hydatophylax', 'Hydropsyche', 'Hydroptila', 'Isogenoides', 'Isonychia', 'Isoperla', 'Iswaeon', 'Lepidostoma', 'Leptophlebia', 'Leucrocuta', 'Leuctra', 'Maccaffertium', 'Micrasema', 'Mystacides', 'Nectopsyche', 'Nemoura', 'Neoperla', 'Neophylax', 'Neureclipsis', 'Nyctiophylax', 'Oecetis', 'Oemopteryx', 'Onocosmoecus', 'Paracapnia', 'Paragnetina', 'Paraleptophlebia', 'Paranemoura', 'Parapsyche', 'Perlinella', 'Plauditus', 'Plectrocnemia', 'Polycentropus', 'Procloeon', 'Protoptila', 'Protoradema', 'Psilotreta', 'Psychoglypha', 'Psychomyia', 'Pteronarcys', 'Pycnopsyche', 'Rhithrogena', 'Rhyacophila', 'Serratella', 'Setodes', 'Siphlonurus', 'Stenacron', 'Suwallia', 'Sweltsa', 'Taenionema', 'Taeniopteryx', 'Teloganopsis', 'Triaenodes', 'Tricorythodes', 'Wormaldia') %>%
+  colSums() %>%
+  as.data.frame() %>%
+  rownames_to_column('Taxa') %>%
+  rename('sum_of_ept_taxa_ref' = '.' ) %>%
+  arrange(sum_of_ept_taxa_ref)
+
+sum_ept_ref_test <- left_join(df_ref_ept_sum, df_test_ept_sum, by ="Taxa")
+
+#add in order 
+tax_orders_ept <- taxa_orders %>% filter(is_EPT == "y") %>% select(-c(is_EPT)) 
+
+tax_orders_sum_ept <- left_join(tax_orders_ept, sum_ept_ref_test, by = "Taxa")
+```
+
+
+```{r, echo = FALSE, include = FALSE}
+#graph sum ept taxa by test and reference sites, colored by order
+ggplot(tax_orders_sum_ept, aes(y = sum_of_ept_taxa_test, x = sum_of_ept_taxa_ref, color = Order)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dotted") +
+    theme_bw() +
+  viridis::scale_color_viridis(discrete = TRUE) +
+ ylab('Sum of EPT Taxa Occurrences for all Test Sites') + 
+   xlab('Sum of EPT Taxa Occurrences for all Reference Sites') +
+  ggtitle("Sum of EPT Taxa Occurrences, \n Reference vs Test Sites") +
+      theme(plot.title = element_text(hjust = 0.5, size = 12)) +
+  theme(legend.key.height =  unit(.4, "cm"))
+
+
+```
+
+
+# Part 3: Exploring taxa richness and environmental stressors
+
+It's important to look at how the environment might be effecting these species, especially if we want to build a model to predict if a site is a test or reference site. 
+
+Watershed stressor scores were obtained using ArcGIS. These watershed stressor scores represent land use or stressors within the watershed that could drive ecological change, such as road density, agriculture, foresty or other industrial use. 
+
+We compared watershed stressor scores with taxa richness, percent ept and percent plecoptera. 
+
+It looks like there are some interesting patterns here - this will be explored further using ANCOVAs to see if the percent ept varies between test and reference sites. 
+
+```{r, echo =FALSE, message=FALSE, include =FALSE}
+
+df_stressors <- read.csv("eDNA_NCC_WatershedStress.csv")
+stressorsjoin <- full_join(allept, df_stressors, by = 'Sample_ID') %>% select(-ends_with(".y")) %>% rename('Percent_ept' = 'Percent_ept.x')
+
+
+ggplot(stressorsjoin, aes(x = Watershed_stress_score, y = Taxa_richness, color = Status)) +
+  geom_point() +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('Taxa Richness') + xlab('Watershed Stressor Score') +
+  ggtitle("Taxa Richness and Watershed Stressor Scores for Test vs Reference sites ") +
+  theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5, size = 10)) 
+
+```
+
+
+```{r, echo = FALSE, include =FALSE}
+
+#%ept and watershed stressors 
+ggplot(stressorsjoin, aes(x = Watershed_stress_score, y = Percent_ept, color = Status)) +
+  geom_point() +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('Percent EPT') + xlab('Watershed Stressor Score') +
+  ggtitle("Percent EPT and Watershed Stressor Score for Test vs Reference sites ") +
+  theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+```
+
+
+```{r, echo = FALSE, include =FALSE}
+
+#percent plecoptera and watershed stressors
+
+ggplot(stressorsjoin, aes(x = Watershed_stress_score, y = Percent_plecoptera, color = Status)) +
+  geom_point() +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('Percent Plecoptera') + xlab('Watershed Stressor Score') +
+  ggtitle("Percent Plecoptera and Watershed Stressor Score for Test vs Reference Sites ") +
+  theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5, size = 10))
+
+```
+
+
+```{r, echo = FALSE, fig.height= 7, fig.width= 5.5, message = FALSE}
+#scat plots by facet: watershed stressor by richness, ept, plec 
+
+melted <- melt(stressorsjoin, id.vars = c('Watershed_stress_score', 'Status'), measure.vars = c('Taxa_richness', 'Percent_ept', 'Percent_plecoptera'))
+
+melted$Watershed_stress_score <- as.numeric(melted$Watershed_stress_score)
+melted$value <- as.numeric(melted$value)
+
+ggplot(melted, aes(y = value, x = Watershed_stress_score, color = Status)) +
+  geom_point() +
+  facet_wrap(~variable, scales = 'free', strip.position = "left", nrow = 3) +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('') + xlab('Watershed Stressor Scores') +
+  ggtitle("Watershed Stressor Scores vs Taxa Richness, \n Percent EPT, and Percent Plecoptera") +
+      theme(plot.title = element_text(hjust = 0.5, size = 12))  +
+  theme(strip.placement = 'outside') +
+  theme(strip.background = element_blank())
+
+
+```
+
+```{r, echo =FALSE, include =FALSE}
+#taxa richness and pc1 scores
+ggplot(stressorsjoin, aes(x = PC1_score, y = Taxa_richness, color = Status)) +
+  geom_point() +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('Taxa Richness') + xlab('PC1 Scores') +
+  ggtitle("Taxa Richness and PC1 Scores for Test vs Reference sites ") +
+  theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5, size = 10)) 
+
+```
+
+
+```{r, echo = FALSE, include =FALSE}
+#percent ept and pc1
+ggplot(stressorsjoin, aes(x = PC1_score, y = Percent_ept, color = Status)) +
+  geom_point() +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('Percent EPT') + xlab('PC1 Scores') +
+  ggtitle("Percent ETP and PC1 Scores for Test vs Reference sites ") +
+  theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5, size = 10))
+```
+
+
+```{r, echo = FALSE, include =FALSE}
+ggplot(stressorsjoin, aes(x = PC1_score, y = Percent_plecoptera, color = Status)) +
+  geom_point() +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('Percent Plecoptera') + xlab('PC1 Scores') +
+  ggtitle("Percent Plecoptera and PC1 Scores for Test vs Reference sites ") +
+  theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5, size = 10))
+```
+
+
+```{r, echo = FALSE, fig.height= 7, fig.width= 5.5, message = FALSE, include = FALSE}
+
+melted <- melt(stressorsjoin, id.vars = c('PC1_score', 'Status'), measure.vars = c('Taxa_richness', 'Percent_ept', 'Percent_plecoptera'))
+
+melted$PC1_score <- as.numeric(melted$PC1_score)
+melted$value <- as.numeric(melted$value)
+
+ggplot(melted, aes(y = value, x = PC1_score, color = Status)) +
+  geom_point() +
+  facet_wrap(~variable, scales = 'free', strip.position = "left", nrow = 3) +
+    theme_bw() +
+    geom_vline(xintercept=0, linetype="dotted") +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+   ylab('') + xlab('PC1 Scores \n <- forestry                   agriculture ->  ') +
+  ggtitle("PC1 Scores vs Taxa Richness, \n Percent EPT, and Percent Plecoptera") +
+      theme(plot.title = element_text(hjust = 0.5, size = 12))  +
+  theme(strip.placement = 'outside') +
+  theme(strip.background = element_blank())
+
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+
+#ANCOVA analysis
+ancova_ept <- aov(Percent_ept ~ Status + PC1_score + PC1_score * Status, data = stressorsjoin )
+summary(ancova_ept)
+#no interaction btwn pc score and status, could drop them but we already have a sign pvalue for the others so no point, no sign variable
+  
+#looking at watershed stress score instead - strong interaction 
+ancova_ept <- aov(Percent_ept ~ Status + Watershed_stress_score + Watershed_stress_score * Status, data = stressorsjoin )
+summary(ancova_ept) #not independent, percent ept has a different response to watershed stress score depending on ref/test
+
+#looking at watershed stress score and plecoptera
+ancova_ept <- aov(Percent_ept ~ Status + Watershed_stress_score + Watershed_stress_score * Status, data = stressorsjoin) #status matters for the response that ept taxa have, but that there is an interaction between status and watershed_stress score so they have a different response
+summary(ancova_ept)
+
+
+```
+
+
+```{r, echo = FALSE, message = FALSE}
+#PC1 scores were obtained using ArcGIS. Scores less than 0 represent sites that are more impacted by #forestry, and scores greater than 0 represent sites more impacted by agriculture.
+
+#data transformations and calcs to make plots of watershed stressor scores and taxa richness, ept, etc, with frequency of occurrence for each taxa
+
+#join stressors and alldata
+joined_str_alldata <- full_join(stressorsjoin,alldata, by  = 'Sample_ID') %>% select(-ends_with('y'))
+
+#Ablabesmyia:Lymnaea for all reference sites
+stressors_alldata_ref <- joined_str_alldata %>% gather(species, abundance, Ablabesmyia:Lymnaea) %>% 
+  select(Sample_ID, species, abundance, Status.x, Watershed_stress_score) %>%
+  filter(Status.x == 'Reference') %>%
+  mutate(watershed_stess_range = case_when(Watershed_stress_score >= 0 & Watershed_stress_score < .1 ~ '0-.1',
+                                     Watershed_stress_score >= .1 & Watershed_stress_score < .2 ~ '.1-.2',
+                                     Watershed_stress_score >= .2 & Watershed_stress_score < .3 ~ '.2-.3',
+                                     Watershed_stress_score >= .3 & Watershed_stress_score < .4 ~ '.3-.4',
+                                     Watershed_stress_score >= .4 & Watershed_stress_score < .5 ~ '.4-.5',
+                                     Watershed_stress_score >= .5 & Watershed_stress_score < .6 ~ '.5-.6')) %>%
+group_by(species, watershed_stess_range) %>% summarise(total_abundance = sum(abundance))
+
+
+#Ablabesmyia:Lymnaea for all test sites
+stressors_alldata_test <- joined_str_alldata %>% gather(species, abundance,Ablabesmyia:Lymnaea) %>% 
+  select(Sample_ID, species, abundance, Status.x, Watershed_stress_score) %>%
+  filter(Status.x == 'Test') %>%
+  mutate(watershed_stess_range = case_when(Watershed_stress_score >= 0 & Watershed_stress_score < .1 ~ '0-.1',
+                                     Watershed_stress_score >= .1 & Watershed_stress_score < .2 ~ '.1-.2',
+                                     Watershed_stress_score >= .2 & Watershed_stress_score < .3 ~ '.2-.3',
+                                     Watershed_stress_score >= .3 & Watershed_stress_score < .4 ~ '.3-.4',
+                                     Watershed_stress_score >= .4 & Watershed_stress_score < .5 ~ '.4-.5',
+                                     Watershed_stress_score >= .5 & Watershed_stress_score < .6 ~ '.5-.6')) %>%
+group_by(species, watershed_stess_range) %>% summarise(total_abundance = sum(abundance))
+
+```
+
+
+## Watershed Stressor Score and Total Taxa Abundance 
+And finally, the watershed stressor scores were divided into six ranges, and the total taxa abundance was summed across each range of watershed stressor scores. The following tile plots show the total taxa abundance for each species, across all test and reference sites. This plot was made as another way to visualize if there are any differences or patterns between the species or groups of species that appear at reference or test sites.
+
+
+```{r, fig.height= 12, fig.width=10, echo = FALSE, message = FALSE}
+
+e <- ggplot(stressors_alldata_ref, aes(x = watershed_stess_range, y = species, fill = total_abundance)) +
+  geom_tile() +
+  scale_fill_gradient(low = 'white', high = 'lightblue') +
+  theme_bw()+
+  scale_y_discrete(limits=rev) +
+  scale_x_discrete(limits = c( '0-.1', '.1-.2', '.2-.3', '.3-.4', '.4-.5', '.5-.6')) +
+ # guides(fill = 'none') +
+    ggtitle('Reference Sites') +
+  ylab("")+ xlab("Watershed Stressor Score")+
+theme(plot.title = element_text(hjust = 0.5, size = 15)) +
+    theme(axis.text.x = element_text(size = 10)) +  
+  theme(legend.position="bottom")
+
+
+
+f <- ggplot(stressors_alldata_test, aes(x = watershed_stess_range, y = species, fill = total_abundance)) +
+  geom_tile() +
+  scale_fill_gradient(low = 'white', high = 'orange') +
+  theme_bw()+
+  scale_y_discrete(limits=rev) +
+  scale_x_discrete(limits = c( '0-.1', '.1-.2', '.2-.3', '.3-.4', '.4-.5', '.5-.6')) +
+  ggtitle('Test Sites')+
+  ylab("")+ xlab("Watershed Stressor Score")+
+theme(plot.title = element_text(hjust = 0.5, size = 15)) +
+    theme(axis.text.x = element_text(size = 10)) + 
+  theme(legend.position="bottom")
+
+grid.arrange(e, f, ncol= 2)
+
+
+```
+
+
+```{r, echo = FALSE, message = FALSE}
+#data transformations and calcs part 2
+#Maccaffertium:Xenochironomus for all ref sites
+stressors_alldata_refz <- joined_str_alldata %>% gather(species, abundance, Maccaffertium:Xenochironomus) %>% 
+  select(Sample_ID, species, abundance, Status.x, Watershed_stress_score) %>%
+  filter(Status.x == 'Reference') %>%
+  mutate(watershed_stess_range = case_when(Watershed_stress_score >= 0 & Watershed_stress_score < .1 ~ '0-.1',
+                                     Watershed_stress_score >= .1 & Watershed_stress_score < .2 ~ '.1-.2',
+                                     Watershed_stress_score >= .2 & Watershed_stress_score < .3 ~ '.2-.3',
+                                     Watershed_stress_score >= .3 & Watershed_stress_score < .4 ~ '.3-.4',
+                                     Watershed_stress_score >= .4 & Watershed_stress_score < .5 ~ '.4-.5',
+                                     Watershed_stress_score >= .5 & Watershed_stress_score < .6 ~ '.5-.6')) %>%
+group_by(species, watershed_stess_range) %>% summarise(total_abundance = sum(abundance))
+
+
+#Maccaffertium:Xenochironomus for all test sites
+stressors_alldata_testz <- joined_str_alldata %>% gather(species, abundance, Maccaffertium:Xenochironomus) %>% 
+  select(Sample_ID, species, abundance, Status.x, Watershed_stress_score) %>%
+  filter(Status.x == 'Test') %>%
+  mutate(watershed_stess_range = case_when(Watershed_stress_score >= 0 & Watershed_stress_score < .1 ~ '0-.1',
+                                     Watershed_stress_score >= .1 & Watershed_stress_score < .2 ~ '.1-.2',
+                                     Watershed_stress_score >= .2 & Watershed_stress_score < .3 ~ '.2-.3',
+                                     Watershed_stress_score >= .3 & Watershed_stress_score < .4 ~ '.3-.4',
+                                     Watershed_stress_score >= .4 & Watershed_stress_score < .5 ~ '.4-.5',
+                                     Watershed_stress_score >= .5 & Watershed_stress_score < .6 ~ '.5-.6')) %>%
+group_by(species, watershed_stess_range) %>% summarise(total_abundance = sum(abundance))
+
+```
+
+
+```{r, echo = FALSE, fig.height= 13, fig.width= 10, message = FALSE}
+g <- ggplot(stressors_alldata_refz, aes(x = watershed_stess_range, y = species, fill = total_abundance)) +
+  geom_tile() +
+  scale_fill_gradient(low = 'white', high = 'lightblue') +
+  theme_bw()+
+  scale_y_discrete(limits=rev) +
+  scale_x_discrete(limits = c( '0-.1', '.1-.2', '.2-.3', '.3-.4', '.4-.5', '.5-.6')) +
+  #guides(fill = 'none') +
+  ggtitle('Reference Sites')+
+  ylab("")+ xlab("Watershed Stressor Score")+
+theme(plot.title = element_text(hjust = 0.5, size = 15)) +
+    theme(axis.text.x = element_text(size = 10)) + 
+  theme(legend.position="bottom")
+
+
+h <- ggplot(stressors_alldata_testz, aes(x = watershed_stess_range, y = species, fill = total_abundance)) +
+  geom_tile() +
+  scale_fill_gradient(low = 'white', high = 'orange') +
+  theme_bw()+
+  scale_y_discrete(limits=rev) +
+  scale_x_discrete(limits = c( '0-.1', '.1-.2', '.2-.3', '.3-.4', '.4-.5', '.5-.6')) +
+  ggtitle('Test Sites') +
+  ylab("") + xlab("Watershed Stressor Score") +
+theme(plot.title = element_text(hjust = 0.5, size = 15)) +
+    theme(axis.text.x = element_text(size = 10)) + 
+  theme(legend.position="bottom")
+
+grid.arrange(g, h, ncol= 2)
+
+```
+
+
+
+```{r, echo = FALSE, message=FALSE, include = FALSE, fig.height=10, include = FALSE}
+# trying to faceting by test vs reference
+
+ test <- joined_str_alldata %>% gather(species, abundance, Ablabesmyia:Lymnaea) %>% 
+  select(Sample_ID, species, abundance, Status.x, Watershed_stress_score) %>%
+  mutate(watershed_stess_range = case_when(Watershed_stress_score >= 0 & Watershed_stress_score < .1 ~ '0-.1',
+                                     Watershed_stress_score >= .1 & Watershed_stress_score < .2 ~ '.1-.2',
+                                     Watershed_stress_score >= .2 & Watershed_stress_score < .3 ~ '.2-.3',
+                                     Watershed_stress_score >= .3 & Watershed_stress_score < .4 ~ '.3-.4',
+                                     Watershed_stress_score >= .4 & Watershed_stress_score < .5 ~ '.4-.5',
+                                     Watershed_stress_score >= .5 & Watershed_stress_score < .6 ~ '.5-.6')) %>%
+group_by(species, watershed_stess_range, Status.x) %>% summarise(total_abundance = sum(abundance)) 
+  
+
+ggplot(test, aes(x = watershed_stess_range, y = species, fill = total_abundance)) +
+  geom_tile() +
+  facet_wrap(~Status.x, scales = 'free', strip.position = "left", nrow = 1) +
+  scale_fill_gradient(low = "white", high= "blue") +
+
+        theme_bw() +
+  scale_y_discrete(limits=rev) +
+  scale_x_discrete(limits = c( '0-.1', '.1-.2', '.2-.3', '.3-.4', '.4-.5', '.5-.6')) +
+      theme(plot.title = element_text(hjust = 0.5, size = 12))  +
+  theme(strip.placement = 'outside') +
+theme(strip.background = element_blank(), strip.text = element_blank()) +
+       ggtitle("Watershed Stressor Scores and Taxa Abundance") +
+ylab('') + xlab('Watershed Stressor Scores') 
+
+
+
+#joined_str_alldata %>% 
+ # select(Sample_ID, Status.x, Watershed_stress_score, Ablabesmyia:Xenochironomus) %>% 
+  #mutate(alphabet = ifelse(colnames(joined_str_alldata >= "Ablabesmyia" & colnames(joined_str_alldata) <= "Lymnaea", "a", "b")) )
+
+```
+
+# Part 4: Distribution of Environmental Variables
+
+And finally, it's important to understand if there are differences in environmental variables at each site, to make sure we are modeling the difference in species communities rather than the differences in environmental variables. 
+
+The distribution of each environmental variable was graphed in reference and test sites to see if there are differences in environmental variables. Environmental variables were also graphed by latitude and longitude to assess spatial variation.
+
+So far, no major differences in environmental variables exist between test and reference sites. There is some natural variability, but this makes sense in a complex environmental system. As the main boxes of the boxplot (.25-.75 quantiles) overlap with one another, it's not likely that there are huge differences here that might affect the modeling process. 
+
+And finally, there does not appear to be any obvious groupings or relationship between lat/long and the different variables - the orange and blue dots seem to follow the same patterns, so there shouldn't be huge differences between these variables that may affect the modeling process. 
+
+
+```{r , fig.height= 6, fig.width= 8, echo = FALSE}
+
+melted <- melt(alldata, id.vars = 'Status', measure.vars = c('runoff','precip','evapotransp', 'elevation', 'slope', 'airtemp', 'snowcover', 'inundation', 'discharge', 'silt', 'sand', 'wetlands', 'protectedarea', 'orgcarbon'))
+
+melted$value <- as.numeric(melted$value)
+
+ggplot(melted, aes(x =variable, y = value, fill = Status)) +
+geom_boxplot() +
+  facet_wrap(~variable, scales = 'free') +
+    theme_bw() +
+  scale_fill_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+  ggtitle('Environmental Variables for Test vs Reference Sites') +
+  ylab('') + xlab('') +
+ theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()) +
+    theme(plot.title = element_text(hjust = 0.5, size = 12)) 
+
+```
+
+
+```{r ,fig.height= 6, fig.width= 8, echo = FALSE}
+
+## Distribution of Environmental Variables by longitude for test and reference sites
+
+melted_long <- melt(alldata, id.vars = c('Longitude_', 'Status'), measure.vars = c('runoff','precip','evapotransp', 'elevation', 'slope', 'airtemp', 'snowcover', 'inundation', 'discharge', 'silt', 'sand', 'wetlands', 'protectedarea', 'orgcarbon'))
+
+melted_long$Longitude_ <- as.numeric(melted_long$Longitude_)
+melted_long$value <- as.numeric(melted_long$value)
+
+ggplot(melted_long, aes(y = value, x = Longitude_, color = Status)) +
+  geom_point() +
+  facet_wrap(~variable, scales = 'free') +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('') + xlab('Longitude (west to east)') +
+  ggtitle("Distribution of Environmental Variables by longitude for test and reference sites ") +
+      theme(plot.title = element_text(hjust = 0.5, size = 12)) 
+
+
+```
+
+
+
+```{r , fig.height= 6, fig.width= 8, echo = FALSE}
+## Distribution of Environmental Variables by latitude for test and reference sites
+
+melted_lat <- melt(alldata, id.vars = c('Latitude_', 'Status'), measure.vars = c('runoff','precip','evapotransp', 'elevation', 'slope', 'airtemp', 'snowcover', 'inundation', 'discharge', 'silt', 'sand', 'wetlands', 'protectedarea', 'orgcarbon'))
+
+
+melted_lat$Latitude_ <- as.numeric(melted_lat$Latitude_) 
+melted_lat$value <- as.numeric(melted_lat$value) 
+
+ggplot(melted_lat, aes(y = value, x = Latitude_, color = Status)) +
+  geom_point() +
+  facet_wrap(~variable, scales = 'free') +
+    theme_bw() +
+  scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+ ylab('') + xlab('Latitude (south to north)') +
+    ggtitle("Distribution of Environmental Variables by latitude for test and reference sites ") +
+      theme(plot.title = element_text(hjust = 0.5, size = 12))
+
+```
+
+
