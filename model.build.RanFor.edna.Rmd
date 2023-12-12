@@ -9,10 +9,7 @@ J.Van Sickle, 02/25/10; Modified by B. Levenstein 2023; Modified by J. Levy 2023
 load required packages:
 ```{r}
 
-#setwd("C:/Users/jacqu/eDNA_and_morphology_RCA")
-
 library(cluster)
-#library(Hmisc)
 library(randomForest)
 library(dplyr)
 library(sqldf)
@@ -20,6 +17,7 @@ library(vegan)
 library(tibble)
 library(data.table)
 library(factoextra)
+library(ggplot2)
 
 ```
 
@@ -28,13 +26,13 @@ library(factoextra)
 Load in benthic and meta data; tidy and merge
 ```{r}
 
-edna_benthic <- read.csv("C:/Users/jacqu/eDNA_and_morphology_RCA/21072022_eDNA genera.csv") 
+edna_benthic <- read.csv("C:/Users/LevyJ/eDNA-Analysis/21072022_eDNA genera.csv") 
 
 edna_benthic <- edna_benthic %>%
     mutate(Sample_ID = toupper(Sample_ID)) %>%
   arrange(desc(Sample_ID))
 
-meta <- read.csv("C:/Users/jacqu/eDNA_and_morphology_RCA/21072022_eDNA sample metadata.csv")
+meta <- read.csv("C:/Users/LevyJ/eDNA-Analysis/21072022_eDNA sample metadata.csv")
 
 meta <- meta %>%
   mutate(Sample_ID = toupper(Sample_ID_UPDATED)) %>%
@@ -51,20 +49,51 @@ edna_meta_benth <- merge(meta, edna_benthic, on = "Sample_ID")
 Habitat data tidying and merge - results in one aligned dataframe with all benthic, meta, and habitat data
 
 ```{r}
+#old tidying, keeep just in case
+#habitat <- read.csv("C:/Users/LevyJ/eDNA-Analysis/RIVPACS_habitat.csv")
+#habitat <- habitat %>%
+ #   mutate(Sample_ID = toupper(Sample_ID)) %>%
+#  arrange(desc(Sample_ID))
+#alldata <- merge(habitat, edna_meta_benth, by = "Sample_ID")
 
-habitat <- read.csv("C:/Users/jacqu/eDNA_and_morphology_RCA/RIVPACS_habitat.csv")
 
-habitat <- habitat %>%
-    mutate(Sample_ID = toupper(Sample_ID)) %>%
+#habitat data
+habitat_allvars <- read.csv("habitat_lv12_RIVPACS.csv", header = FALSE)
+colnames(habitat_allvars) <- paste(habitat_allvars[1,], habitat_allvars[2,], sep = '_' )
+habitat_allvars <- habitat_allvars[-c(1,2),]
+
+habitat <- habitat_allvars%>%
+  rename( 'Sample_ID' ='Sample_ID_') %>%
+  mutate(Sample_ID = toupper(Sample_ID)) %>%
   arrange(desc(Sample_ID))
 
-alldata <- merge(habitat, edna_meta_benth, by = "Sample_ID")
+alldata  <- merge(habitat, edna_meta_benth, by = "Sample_ID") %>% select(which(!duplicated(names(.))))
+alldata <- alldata[!grepl('SJR', alldata$Sample_ID),]
 
-```
+#rename columns in alldata to make them easier to read 
 
-```{r}
+alldata <- alldata %>% 
+  rename('Taxa_richness' = 'Sample_richness',
+          'discharge' = 'dis_m3_pyr_Discharge_Av_annual_m3' ,
+         'runoff' = "run_mm_syr_Runoff_Annual_av_mm",
+         'inundation' = 'inu_pc_ult_Inundation_perc_up_longtermmax',
+         'elevation' = 'ele_mt_uav_Elevation_av_up',
+         'slope' = 'slp_dg_uav_Slope_terrain_av_up',
+         'airtemp' = 'tmp_dc_uyr_Airtemp_av_up' ,
+         'precip'  = 'pre_mm_uyr_Precip_ann_av_up',
+        'evapotransp' =  'aet_mm_uyr_ActualEvapo_ann_av_up',
+        'snowcover' = 'snw_pc_uyr_Snowcover_ann_av_up',
+        'wetlands' = 'wet_pc_ug2_Wetland_extent_up_g2', 
+        'protectedarea' = 'pac_pc_use_Protected_area_up',
+        'silt'=  'slt_pc_uav_Siltfraction_av_up',
+        'sand' ='snd_pc_uav_Sandfraction_av_up',
+        'orgcarbon' = 'soc_th_uav_Soil_orgcarbon_av_up',
+        'agriculture' = 'crp_pc_use_Cropland_extent_up') 
 
-
+#habitat data - add watershed stress score df
+df_stressors <- read.csv("eDNA_NCC_WatershedStress.csv")
+alldata <- full_join(alldata, df_stressors, by = 'Sample_ID') %>% select(which(!duplicated(names(.)))) %>%
+  select(-ends_with(".y")) %>% rename("Status" = "Status.x")
 
 ```
 
@@ -84,8 +113,9 @@ Input the predictor (habitat) data, tab delimited. Use the sample/site ID as the
 
 predall <- alldata %>%
   filter(Status == "Reference") %>%
-  select(c("Sample_ID", "inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")) %>%
-  column_to_rownames("Sample_ID")
+  select(c("Sample_ID", "inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge", "Watershed_stress_score")) %>%
+  column_to_rownames("Sample_ID") %>%
+  mutate_all(as.numeric)
 
 ```
 
@@ -108,7 +138,7 @@ Correlation matrix creation:
 
 hab_cormatrix <- predall 
 
-res <-cor(hab_cormatrix[,-1])
+res <- cor(hab_cormatrix[,-1])
 
 cormat <- round(res,2)
 
@@ -128,7 +158,7 @@ Variables were originally chosen based on whether or not they were directly rela
 
 ```{r}
 
-candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")
+candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge", "Watershed_stress_score")
 
 ```
 
@@ -195,28 +225,17 @@ Extract subsets of bug and predictor data for the calibration ("C") and validati
 bugcal.pa <- bugall #bug data, presence/absence matrix, ref sites only 
 predcal <- predall #predictor (habitat data), ref sites only
  
-#not done
-predcal <- predall[predall[,'CalVal']=='C',] #predictor data - calibration sites
-pred.vld <- predall[substr(as.character(predall[,'CalVal']),1,1)=='V',]  #predictor data - validation sites
+#not done 
+#predcal <- predall[predall[,'CalVal']=='C',] #predictor data - calibration sites
+#pred.vld <- predall[substr(as.character(predall[,'CalVal']),1,1)=='V',]  #predictor data - validation sites
 
-bugcal <- bugall[predcal[,'CalVal']=='C',]; #Bug Abundance matrix, calibration sites;
-bugcal.pa <- bugall[predcal[,'CalVal']=='C',]; #Bug presence/absence matrix, calibration sites;
-bug.vld.pa <- bugall[substr(as.character(predval[,'CalVal']),1,1)=='V',]; #Bug presence/absence matrix, validation sites
+#bugcal <- bugall[predcal[,'CalVal']=='C',]; #Bug Abundance matrix, calibration sites;
+#bugcal.pa <- bugall[predcal[,'CalVal']=='C',]; #Bug presence/absence matrix, calibration sites;
+#bug.vld.pa <- bugall[substr(as.character(predval[,'CalVal']),1,1)=='V',]; #Bug presence/absence matrix, validation sites
 
 ```
 
 ####STEP 2 -- DISSIMILARITIES AND CLUSTER ANALYSIS####
-
-```{r}
-
-##Use vegan to create a dissimilarity matrix to use for the clustering analysis using the calibration sites of the benthic dataset
-##vegdist on calibration data, method = bray, binary = true
-
-dissim <- vegdist(bugcal.pa, method="bray", binary=TRUE)
-
-
-```
-
 Clustering of calibration sites using Agglomerative hierarchical method
 
 Use flexible-Beta method, with Beta=-0.6;
@@ -226,80 +245,42 @@ A single value for par.method value specifies alpha, so alpha=0.8 gives Beta=-0.
 
 See: http://stratigrafia.org/8370/lecturenotes/clusterAnalysis.html#:~:text=The%20agglomerative%20coefficient%20measures%20the,indicate%20less%20well%2Dformed%20clusters. 
 ```{r}
-clus1 <- agnes(x=dissim,diss=T,method="flexible",  par.method=0.8,keep.diss=F,keep.data=F)
+##Use vegan to create a dissimilarity matrix to use for the clustering analysis using the calibration sites of the benthic dataset
+##vegdist on calibration data, method = bray, binary = true
 
+dissim <- vegdist(bugcal.pa, method="bray", binary=TRUE)
 
-dissim2 <- vegdist(bugcal.pa, method="jaccard", binary=TRUE)
-clus2 <- hclust(dissim2, method = "complete")
-```
+clus1 <- agnes(x=dissim, diss=T, method="flexible", par.method=0.8,keep.diss=F,keep.data=F)
 
+plot(clus1,which.plots=2,labels=row.names(bugcal.pa), cex=.4)
+rect.hclust(clus1, k = 3, border = 2:5)
+abline(h=25.0, col='red')
 
-```{r}
-
-pca_result <- prcomp(dissim2)
-
-summary(pca_result)
-
-
-fviz_pca_ind(pca_result, geom = "point")
-
-
-```
-
-Various plots of cluster outcome. Leaf labels are row numbers of dissim matrix
-that is, the order of sites in the calibration data set
-
-plot the dendrogram 
-
-```{r}
-
-plot(clus2,which.plots=2,labels=row.names(bugcal.pa), cex=.3)
-abline(h=15.0, col='red')
-
-#agglomerative coeff = 1; the clustering solution accurately reflects this data 
-#height is high- indicates high dissimilarity between clusters
-#looks like 5 groupings
-
+factoextra::fviz_dend(clus1, cex = 0.4, k = 3)
+clus1$ac  #agglomerative coefficient is high, 0.99
 
 ```
 
 
+Cluster selection methods - goodness of clustering fit by using the gap statistic 
+
+Note: this likely won't work because I didn't use the dissim matrix and the flexible linkage method as in the original cluster
+
 ```{r}
-#skipped
-#can also define a more general dendrogram structure. See 'dendrogram' help;
-dend1<-as.dendrogram(as.hclust(clus1))
-plot(dend1,horiz=T,cex=.2) #Plot dendrogram with horizontal branches
-
-```
-
-Plot dendogram with chosen groupings
-```{r}
-
-factoextra::fviz_dend(clus2, cex = 0.4, k = 8)
-factoextra::fviz_dend(clus1, cex = 0.4, k = 5)
-
-#looks like 5 groups makes sense? 2 could work as well 
-
-```
-
-Continue to look at clustering results by calculating the gap statistic to find 
-```{r}
-
 #gap statistic- "goodness of clustering"/optimal k value
 #use the 1-SE method to find point at which gap stat slows down (firstSEmax),  ie selects smallest k within 1 se of the global max
 
-clgp <- clusGap(bugcal.pa, FUN = hcut, method = 'firstSEmax', K.max = 20, B=25)
+#use NbClust with original data 
+gapstat <- NbClust::NbClust(bugcal.pa, distance = "binary", min.nc = 2, max.nc = 10, method = "average")
+optimalclusters <- gapstat$Best.nc[1] #four groups - the issue here is that I used the average method but clustered with the flexible method, so this isn't really the best way to look at this data.
 
 #visualize gap statistic
-fviz_nbclust(bugcal.pa, FUN = hcut, method = "gap", k.max = 20, nboot = 25)
-#suggests 6-9 groups but no real clear distinction
-
-#Using 6 groups to balance parsimony and complexity
-#can try using higher bootstrapping to see how stable this is
-
+fviz_nbclust(bugcal.pa, FUN = hcut, method = "gap", k.max = 10, nboot = 25)
+#suggests 3-4 groups but no real clear distinction
 ```
 
-Other clustering selection methods
+
+Other clustering selection methods - elbow/silhouette score and plots, and wss. These also aren't the best methods becasue  I'm not using the dissim matrix with bray-curtis distance matrix, but rather used the raw data, and I didn't have a way to tell the functions that this is presence-absence data 
 
 ```{r}
 
@@ -312,13 +293,242 @@ fviz_nbclust(bugcal.pa, FUN = hcut, method = "silhouette", k.max = 15)
 #width is low in this plot, groups aren't different from one another and it looks like 2 is optimal k
 
 ```
-PCA to see which groups are most important
+
+Other clustering selection methods - likely don't work though without using the dissim matrix with bray-curtis distance
+
+```{r}
+
+#elbow method - plot wss against cluster groups and see where the decrease  "slows down"
+fviz_nbclust(bugcal.pa, FUN = hcut, method = "wss", k.max = 15) #minimizes within cluster sum squares 
+#inconclusive, looks like anywhere from 5-9
+
+#silhouette score, ranges from -1 to 1 and says how far apart from one another the clusters are. 1/-1 means they are easily distinguished from one another
+fviz_nbclust(bugcal.pa, FUN = hcut, method = "silhouette", k.max = 15)
+#width is low in this plot, groups aren't different from one another and it looks like 2 is optimal k
+
+```
+
+#Final clustering selection methods 
+
+These allow me to use the dissimilarity matrix and the flexible method, as in the original clustering analysis. 
+These use the silhouette width to show how far apart the clusters are 
+
+```{r}
+
+clus1 <- agnes(x=dissim, diss=T, method="flexible", par.method=0.8,keep.diss=F,keep.data=F)
+
+clusters <- cutree(clus1, k=3)
+
+gapstat <- fpc::cluster.stats(dissim, clusters)
+
+gapstat$avg.silwidth #0.21 close to zero, means clusters aren't well defined
+#silhouette width looks at how similar each data point within a cluster is to its own cluster compared to other clusters. Ie how good the cluster cohesion is. The avgsilwidth is the measure of the average of these silhouette widths compared across all data points. looks at within cluster cohesion. 
+
+gapstat$ch #.40, looks at how different the clusters are from one another, ie how cohesive they are. If it's closer to zero, the clusters aren't well separated and there is likely some cluster overlap.
+
+#in general, reasonable moderate cohesion and clustering with some overlap. maybe some data points have characteristics of more than one cluster
+
+#trial and error with 2,3,4, looks like three clusters is best. 
+
+for (k in 2:10) {
+  clusters <- cutree(clus1, k = k)
+  stats <- fpc::cluster.stats(dissim, clusters)
+  cat("Clusters:", k, "-avg sil width", stats$avg.silwidth, "connectivity index:", stats$ch, "\n")
+}
+
+#final groupings: 3
+```
+
+
+```{r}
+
+
+clusters <- cutree(clus1, k=3)
+sil_widths <- cluster::silhouette(clusters, dissim)
+plot(sil_widths, main = "Sil plot", col = as.numeric(clusters), border = NA)
+legend("center", legend = unique(clusters), fill = unique(clusters), title = "Clusters")
+#could be dominant or overlapping characteristics in all clusters
+#first number is how many data points in each cluster, second number is the avg sil width for points within the cluster
+
+```
+
+
+#PCA on clustering to check for patterns 
+```{r}
+
+
+clusters <- cutree(clus1, k=3)
+
+pca_result <- prcomp(dissim, scale. = TRUE)
+
+
+data <- data.frame(pc1 = pca_result$x[,1], pc2 = pca_result$x[,2], Cluster = as.factor(clusters))
+
+plot(data$pc1, data$pc2, col = data$Cluster, pch = 19)
+
+
+ggplot(data, aes(x = pc1, y = pc2, colour = Cluster)) +
+  geom_point() +
+  viridis::scale_color_viridis(discrete = TRUE) +
+  theme_bw() 
+
+eigen <- pca_result$sdev^2
+
+plot(1:length(eigen), eigen, type = 'b', main = "scree plot")
+
+#loadings
+#pca_result$rotation[,1]
+#pca_result$rotation[,2] 
+
+```
+
+Heatmap, maybe ignore
+```{r}
+
+heatmap(as.matrix(bugcal.pa), scale = "row", col = viridis:: viridis(25))
+
+heatmap_data <- reshape2::melt(cbind(bugcal.pa, Cluster = as.factor(clusters)))
+
+ggplot(heatmap_data, aes(x = variable, y = Cluster, fill = value)) +
+  geom_tile() +
+  scale_fill_viridis_b() +
+  theme_bw()
+
+```
+#NMDS plot for cluster 1
+
+```{r}
+library(vegan)
+
+clusters <- cutree(clus1, k=3)
+nmds_result <- metaMDS(dissim)
+
+nmds_data <- as.data.frame(nmds_result$points)
+nmds_data$clusters <- as.factor(clusters)
+
+plot(nmds_result, type = 'n')
+points(nmds_result, col = clusters)
+
+ggplot(nmds_data, aes(x = MDS1, y = MDS2, color = clusters)) +
+  geom_point() +
+  viridis::scale_color_viridis(discrete = TRUE) +
+  theme_bw()
+
+
+```
+
+#Sensitivity analysis - try average method next
+#note: it looks like the flexible method captures the underlying structure of the data a bit better
+
+```{r}
+
+dissim2 <- vegdist(bugcal.pa, method="bray", binary=TRUE)
+
+clus2 <- agnes(x=dissim2, diss=T, method="average", par.method=0.8,keep.diss=F,keep.data=F)
+
+plot(clus2,which.plots=2,labels=row.names(bugcal.pa), cex=.4)
+rect.hclust(clus1, k = 3, border = 2:5)
+abline(h=25.0, col='red')
+
+factoextra::fviz_dend(clus2, cex = 0.4, k = 3)
+clus2$ac  #agglomerative coefficient is low, 0.64
+
+
+```
+```{r}
+
+
+clusters2 <- cutree(clus2, k=3)
+
+gapstat <- fpc::cluster.stats(dissim2, clusters2)
+
+gapstat$avg.silwidth  #.14
+gapstat$ch     #2.22
+
+
+for (k in 2:20) {
+  clusters <- cutree(clus2, k = k)
+  stats <- fpc::cluster.stats(dissim2, clusters2)
+  cat("Clusters:", k, "-avg sil width", stats$avg.silwidth, "connectivity index:", stats$ch, "\n")
+}
+
+#the gap stat doesn't change, no clear peak. Likely there is not a clear cut cluster structure 
+
+```
+
+
+```{r}
+
+clusters2 <- cutree(clus2, k=3)
+sil_widths <- cluster::silhouette(clusters, dissim)
+plot(sil_widths, main = "Sil plot", col = as.numeric(clusters), border = NA)
+legend("center", legend = unique(clusters), fill = unique(clusters), title = "Clusters")
+#no distinct groups 
+
+```
+
+
+
+#PCA on clustering for avg method
+```{r}
+
+
+clusters2 <- cutree(clus2, k=3)
+
+pca_result2 <- prcomp(dissim2, scale. = TRUE)
+
+
+data2 <- data.frame(pc1 = pca_result2$x[,1], pc2 = pca_result2$x[,2], Cluster = as.factor(clusters2))
+
+plot(data2$pc1, data2$pc2, col = data2$Cluster, pch = 19)
+
+
+ggplot(data2, aes(x = pc1, y = pc2, colour = Cluster)) +
+  geom_point() +
+  viridis::scale_color_viridis(discrete = TRUE) +
+  theme_bw() 
+
+eigen <- pca_result$sdev^2
+
+plot(1:length(eigen), eigen, type = 'b', main = "scree plot")
+
+#loadings
+#pca_result2$rotation[,1]
+#pca_result2$rotation[,2] 
+
+#all one cluster, this doesn't capture the underlying patterns well.
+
+```
+NMDS for cluster 2
+
+```{r}
+library(vegan)
+
+clusters <- cutree(clus2, k=3)
+nmds_result <- metaMDS(dissim2)
+
+nmds_data <- as.data.frame(nmds_result$points)
+nmds_data$clusters <- as.factor(clusters)
+
+plot(nmds_result, type = 'n')
+points(nmds_result, col = clusters)
+
+ggplot(nmds_data, aes(x = MDS1, y = MDS2, color = clusters)) +
+  geom_point() +
+  viridis::scale_color_viridis(discrete = TRUE) +
+  theme_bw()
+
+```
+
+
+
+PCA - disregard the results but can use this code for better visualizations 
 ```{r}
 
 #PCA script from statquest demo: https://github.com/StatQuest/pca_demo/blob/master/pca_demo.R
 #dimensionality reduction techniques, like PCA to see which groups are the most imp.
 
-pca <- prcomp(bugcal.pa, scale = FALSE)
+pca <- prcomp(dissim, scale = FALSE)
 
 #x has the principal components
 #first pc accounts for the most variation in the data 
@@ -338,7 +548,7 @@ pca.data <- data.frame(Sample=rownames(pca$x),
   Y=pca$x[,2])
 
 ggplot(data=pca.data, aes(x=X, y=Y, label=Sample)) +
-  geom_text() +
+  geom_point() +
   xlab(paste("PC1 - ", pca.var.per[1], "%", sep="")) +
   ylab(paste("PC2 - ", pca.var.per[2], "%", sep="")) +
   theme_bw() +
@@ -365,7 +575,7 @@ Can repeat this process to generate several candidate groupings from a single de
 
 ```{r}
 
-grps_6 <- cutree(clus1, k=6)
+grps_6 <- cutree(clus1, k=3)
 
 table(grps_6) #count number of sites in each group 
 
@@ -376,42 +586,8 @@ rownames(bugcal.pa)[grps_6 == 4]
 
 ```
 
-### STEP 2.5 Multivariate regression splines ##
 
-????
-```{r}
-#multivariate regression splines... 
-model <- earth::earth(x = predall, y = bugall)
-
-testbug <- alldata %>% 
-  filter(Status == "Test")  %>% 
-  select(-c(inundation, slope, airtemp,precip, sand, evapotransp, elevation, wetlands, protectedarea,silt, orgcarbon, snowcover, runoff, discharge, Latitude.x, Longitude.x, Status, Province, Sample_year, Latitude.y, Longitude.y, Sample_richness) ) %>%
-  column_to_rownames("Sample_ID")
-
-
-testpred <- alldata %>%
-  filter(Status == "Test") %>%
-  select(c(inundation, slope, airtemp,precip, sand, evapotransp, elevation, wetlands, protectedarea,silt, orgcarbon, snowcover, runoff, discharge ))
-
-modpred <- stats::predict(model, newdata = testpred )
-
-modpred <- as.data.frame(modpred)
-
-#find differences between known test data and model predictions of test data
-modpred - testbug
-```
-
-###STEP 2.75 BRT ###
-
-```{r}
-library(dismo)
-
-gbm.step( gbm.x= 2:23, gbm.y = 24:50, data = alldata)
-
-
-```
-
-#### STEP 2.80 RF REGRESSION MODEL - look at how 
+#### STEP 2.80 RF REGRESSION MODEL - disregard this for now 
 
 ```{r}
 #tidy data to get spp richness column
@@ -434,18 +610,26 @@ varImpPlot(rf_reg_model)
 #next can try removing predictors that contribute the most to the mse.
 ```
 
+
 #### STEP 3 . BUILD RANDOM FOREST MODEL TO PREDICT GROUP MEMBERSHIP;####
-# First, put the group IDs and predictor variables into a single data frame;
+# First, put the group IDs and predictor variables into a single data frame
+
 ```{r}
 
-candvar<-c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")
+candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge", "Watershed_stress_score")
 
-#smaller set of autocorrelated variables removed - just one from each pair
-candvar <- c('orgcarbon', 'protectedarea', 'slope', 'runoff', 'silt', 'elevation', 'wetlands', 'airtemp', 'inundation')
+#can remove autocorrelated variables - ignore this for now 
+#candvar_rem <- c('orgcarbon', 'protectedarea', 'slope', 'runoff', 'silt', 'elevation', 'wetlands', 'airtemp', 'inundation')
 
-rfdat <- data.frame(predall[,candvar],Groups=grps_6) #change to predcal data only
+clusters <- cutree(clus1, k=3)
+
+rfdat <- data.frame(predcal[,candvar], Groups=clusters) 
 
 rfdat$Groups <- factor(rfdat$Groups)
+
+#Can get the site Ids for the members of cluster 1, 2, 3 if needed
+#rownames(bugcal.pa)[clusters == 2]
+
 
 ```
 
@@ -453,12 +637,14 @@ rfdat$Groups <- factor(rfdat$Groups)
 # Build Random Forest (RF) 
 
 ```{r}
-?randomForest()
+
 
 rf.mod <- randomForest(Groups ~ ., data=rfdat, ntree=500, importance=TRUE, norm.votes=TRUE, keep.forest=TRUE)
 
 print(rf.mod)   #Displays out-of-bag (OOB) error matrix. Columns are predicted class, rows are true class
 
+
+#OOB estimate of  error rate: 34.23%
 ```
 
 various diagnostics
@@ -469,6 +655,7 @@ varImpPlot(rf.mod)  #plots 2 measures of predictor importance;
 #Note that all candidate predictors are used in a RF model.;
 
 #how imp they are - can get rid of ones that aren't important and then see if makes model the better or worse 
+
 ```
 
 #For key predictors, useful to look at partial dependence plots. 
@@ -483,20 +670,23 @@ sapply(unique(rfdat$Groups),function(grp){
 
 
 ```
+
 ####STEP 4 - Save the final RF predictive model, for future use####
 
 To specify the entire, final RF model, you need to store 4 things as an R object:
 
 
 ```{r}
+
+
 #4.1) The site-by-taxa matrix of observed presence/absence at calibration sites (bugcal.pa, already available) 
 
-
-
 #4.2) Specify the vector of final group membership assignments at calibration sites(grps.final);
-grps.final<- grps_6
+grps.final<- clusters
+
 # 4.3) Specify the final predictor variables
 preds.final<-candvar
+
 # 4.4) The final RF model (rfmod)
 
 
@@ -506,7 +696,7 @@ preds.final<-candvar
 Save the model components together in a single .Rdata file. Any R user can load this file, along with model.predict.RF.r, to make predictions from the model
 ```{r}
 
-save(bugcal.pa, predcal, grps.final, preds.final, rf.mod, file='My.RF.Model.Version1.Rdata');
+save(bugcal.pa, predcal, grps.final, preds.final, rf.mod, file='My.RF.Model.eDNA.Version1.Rdata');
 
 #NOTE - Predcal is not needed to define the model, but is included so that users see the required format for predictor data
 
@@ -515,9 +705,11 @@ save(bugcal.pa, predcal, grps.final, preds.final, rf.mod, file='My.RF.Model.Vers
 ####Step 5 - Further checks on performance of the final, chosen model####
 
 #Option 5.1 - Make predictions of E and O/E (observed/expected) for calibration (reference) sites. Examine O/E statistics and plots;
+
 To do this, run the model.predict.RanFor.4.2 function, using the calibration data as the 'new' data;
 See Step 7 below, for more info on making predictions;
 Also see internal documentation of model.predict.Ran.For.4.2;
+
 ```{r}
 
 source("model.predict.RanFor.4.2.r"); #assume this is the rivpacs script 
@@ -590,6 +782,7 @@ plot(OE.assess.vld$OE.scores[,c('E','O')],xlab='Expected richness',ylab='Observe
 abline(0,1); #add a 1-1 line;
 
 #make sure it's not over 1, should be same as above
+
 ```
 
 #From here down should be a script for communities to use, but add all of the tests in 
