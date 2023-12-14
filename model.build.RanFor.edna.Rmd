@@ -113,7 +113,7 @@ Input the predictor (habitat) data, tab delimited. Use the sample/site ID as the
 
 predall <- alldata %>%
   filter(Status == "Reference") %>%
-  select(c("Sample_ID", "inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge", "Watershed_stress_score")) %>%
+  select(c("Sample_ID", "inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")) %>%
   column_to_rownames("Sample_ID") %>%
   mutate_all(as.numeric)
 
@@ -158,7 +158,7 @@ Variables were originally chosen based on whether or not they were directly rela
 
 ```{r}
 
-candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge", "Watershed_stress_score")
+candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")
 
 ```
 
@@ -224,7 +224,7 @@ Extract subsets of bug and predictor data for the calibration ("C") and validati
 #use JVS's names for simplicity
 bugcal.pa <- bugall #bug data, presence/absence matrix, ref sites only 
 predcal <- predall #predictor (habitat data), ref sites only
- 
+
 #not done 
 #predcal <- predall[predall[,'CalVal']=='C',] #predictor data - calibration sites
 #pred.vld <- predall[substr(as.character(predall[,'CalVal']),1,1)=='V',]  #predictor data - validation sites
@@ -616,10 +616,10 @@ varImpPlot(rf_reg_model)
 
 ```{r}
 
-candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge", "Watershed_stress_score")
+candvar <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")
 
 #can remove autocorrelated variables - ignore this for now 
-#candvar_rem <- c('orgcarbon', 'protectedarea', 'slope', 'runoff', 'silt', 'elevation', 'wetlands', 'airtemp', 'inundation')
+#candvar_rem <- c("inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge", "Watershed_stress_score", "PC1_score")
 
 clusters <- cutree(clus1, k=3)
 
@@ -643,8 +643,8 @@ rf.mod <- randomForest(Groups ~ ., data=rfdat, ntree=500, importance=TRUE, norm.
 
 print(rf.mod)   #Displays out-of-bag (OOB) error matrix. Columns are predicted class, rows are true class
 
-
 #OOB estimate of  error rate: 34.23%
+
 ```
 
 various diagnostics
@@ -675,17 +675,15 @@ sapply(unique(rfdat$Groups),function(grp){
 
 To specify the entire, final RF model, you need to store 4 things as an R object:
 
-
 ```{r}
-
 
 #4.1) The site-by-taxa matrix of observed presence/absence at calibration sites (bugcal.pa, already available) 
 
 #4.2) Specify the vector of final group membership assignments at calibration sites(grps.final);
-grps.final<- clusters
+grps.final <- clusters
 
 # 4.3) Specify the final predictor variables
-preds.final<-candvar
+preds.final <- candvar
 
 # 4.4) The final RF model (rfmod)
 
@@ -704,14 +702,13 @@ save(bugcal.pa, predcal, grps.final, preds.final, rf.mod, file='My.RF.Model.eDNA
 
 ####Step 5 - Further checks on performance of the final, chosen model####
 
-#Option 5.1 - Make predictions of E and O/E (observed/expected) for calibration (reference) sites. Examine O/E statistics and plots;
+#Option 5.1 - Make predictions of E and O/E (observed/expected) for calibration (reference) sites. Examine O/E statistics and plots
 
 To do this, run the model.predict.RanFor.4.2 function, using the calibration data as the 'new' data;
 See Step 7 below, for more info on making predictions;
 Also see internal documentation of model.predict.Ran.For.4.2;
 
 ```{r}
-
 source("model.predict.RanFor.4.2.r"); #assume this is the rivpacs script 
 # Two options, for calibration data;
 # Option 1 - Set Cal.OOB=TRUE, for out-of-bag predictions (see Cutler et.al). Gives more realistic (larger) SD(O/E), appropriate for new data; 
@@ -719,18 +716,25 @@ source("model.predict.RanFor.4.2.r"); #assume this is the rivpacs script
 OE.assess.cal <- model.predict.RanFor.4.2(bugcal.pa, grps.final, preds.final, ranfor.mod=rf.mod,prednew=predcal,bugnew=bugcal.pa,Pc=0.5,Cal.OOB=TRUE)
 
 #oob true
+#Statistics of O/E for new samples: (here I used the same ones used to build the model)
+  
+#Mean(O/E) and SD(O/E), from predictive model: 
+#0.864        0.409
+  
+# Mean(O/E) and SD(O/E), from null model: 
+#1.000            0.425
+
+#if pred model and null aren't diff then don't use groups
 
 ```
+
 
 # Option 2 - Set Cal.OOB=FALSE, for in-bag predictions. Gives optimistically small SD(O/E), because RF models are tightly tuned to in-bag calibration data;
 
 ```{r}
 
-OE.assess.cal <- model.predict.RanFor.4.2(bugcal.pa, grps.final, preds.final, ranfor.mod = rf.mod, prednew=predcal, bugnew = bugcal.pa, Pc=0.5, Cal.OOB=FALSE)
-
 #oob false
-
-#if pred model and null aren't diff then don't use groups
+OE.assess.cal <- model.predict.RanFor.4.2(bugcal.pa, grps.final, preds.final, ranfor.mod = rf.mod, prednew=predcal, bugnew = bugcal.pa, Pc=0.5, Cal.OOB=FALSE)
 
 ```
 
@@ -740,7 +744,7 @@ look at other prediction results, for calibration sites;
 
 names(OE.assess.cal);   #names of 2 components of the prediction results list;
 head(OE.assess.cal$OE.scores); #data frame of O/E scores, 1st 5 rows;
-head(OE.assess.cal$Capture.Probs); #predicted capture probabilties;
+head(OE.assess.cal$Capture.Probs); #predicted capture probabilities;
 head(OE.assess.cal$Group.Occurrence.Probs); #predicted group occurrence probabilities, 1st 5 rows
 
 ```
@@ -754,6 +758,7 @@ hist(OE.assess.cal$OE.scores$OoverE,xlab="O/E");
 qqnorm(OE.assess.cal$OE.scores$OoverE);
 
 #shows if residuals are normal?
+
 ```
 
 scatterplot of O (on y-axis) vs E (on x-axis). See Pineiro et al. Ecol. Modelling 2008, 316-322, for this choice of axes;
@@ -770,8 +775,10 @@ abline(0,1); #add a 1-1 line
 
 
 ### Option 5.2 - Repeat Step 5.1, but this time use validation data. Check especially for model bias (mean(O/E) differs from 1.0);
+
 ```{r}
 
+#didn't do because we don't have cal/val data 
 OE.assess.vld <- model.predict.RanFor.4.2(bugcal.pa,grps.final,preds.final, ranfor.mod=rf.mod,prednew=pred.vld,bugnew=bug.vld.pa,Pc=0.5,Cal.OOB=FALSE)  ;
 OE.assess.vld$OE.scores;
 
@@ -779,11 +786,137 @@ hist(OE.assess.vld$OE.scores$OoverE,xlab="O/E");
 qqnorm(OE.assess.vld$OE.scores$OoverE);
 
 plot(OE.assess.vld$OE.scores[,c('E','O')],xlab='Expected richness',ylab='Observed richness');
-abline(0,1); #add a 1-1 line;
+abline(0,1); 
 
 #make sure it's not over 1, should be same as above
 
 ```
+
+##Try with test data to see how well it predicts group membership
+```{r}
+
+#make dfs of test data for bug and environmental variables 
+
+bugall_test <- alldata %>% 
+  filter(Status == "Test") %>%
+  column_to_rownames("Sample_ID") %>%
+select(Ablabesmyia:Xenochironomus)  
+
+predall_test <- alldata %>%
+  filter(Status == "Test") %>%
+  select(c("Sample_ID", "inundation", "slope","airtemp","precip", "sand", "evapotransp", "elevation", "wetlands", "protectedarea","silt", "orgcarbon", "snowcover", "runoff", "discharge")) %>%
+  column_to_rownames("Sample_ID") %>%
+  mutate_all(as.numeric)
+
+```
+
+```{r}
+
+#using the test data. 
+
+OE.assess.test <- model.predict.RanFor.4.2(bugcal.pa, grps.final, preds.final, ranfor.mod=rf.mod, prednew=predall_test, bugnew=bugall_test, Pc=0.5,Cal.OOB=TRUE)   #oob true, better for new data
+
+OE.assess.test$OE.scores
+
+hist(OE.assess.test$OE.scores$OoverE,xlab="O/E");
+qqnorm(OE.assess.test$OE.scores$OoverE);
+
+plot(OE.assess.test$OE.scores[,c('E','O')],xlab='Expected richness',ylab='Observed richness');
+abline(0,1); #add a 1-1 line
+
+#make sure it's not over 1, should be same as above
+  
+#Statistics of O/E for test samples
+ 
+#Mean(O/E) and SD(O/E), from predictive model: 
+#0.646        0.344
+  
+#Mean(O/E) and SD(O/E), from null model: 
+#0.790        0.378
+
+```
+
+```{r}
+
+#stack the results and bind to all data, then plot boxplots - 
+
+results <- rbind(OE.assess.cal$OE.scores, OE.assess.test$OE.scores) %>%  rownames_to_column('Sample_ID')
+
+results_ref_test <- left_join(results, alldata, by = "Sample_ID")
+
+```
+
+##Graphs - boxplots 
+```{r}
+
+ggplot(results_ref_test, aes(x= Status, y = OoverE, fill = as.factor(Status))) +
+   geom_boxplot() +
+  stat_boxplot(geom = "errorbar") +
+      theme_bw() +
+  ylim(0,2) +
+xlab('  ') + 
+   ylab('O/E scores') +
+  ggtitle("Random Forest Model Results") + 
+      theme(plot.title = element_text(hjust = 0.5, size = 12)) +
+  theme(axis.text.x = element_text(face="bold", size=10 )) +
+    labs(color = "Cluster Number") +
+  viridis::scale_fill_viridis(discrete = TRUE) +
+  theme(legend.position = "none")
+
+
+```
+
+
+
+
+
+```{r}
+
+
+ggplot(results_ref_test, aes(x = Watershed_stress_score, y = OoverE, colour = as.factor(Status) )) +
+  geom_point() +
+  geom_line(y = 1.0, color = "black", linetype = "dotted") +
+  viridis::scale_color_viridis(discrete = TRUE) +
+  theme(panel.background = element_blank()) +
+  theme_bw() +
+  theme(panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()) +
+  theme(axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14)) +
+  labs(colour = "Status")
+
+
+
+```
+
+
+```{r}
+
+
+ggplot(results_ref_test, aes(x = PC1_score, y = OoverE, colour = as.factor(Status) )) +
+  geom_point() +
+  geom_line(y = 1.0, color = "black", linetype = "dotted") +
+  viridis::scale_color_viridis(discrete = TRUE) +
+  theme(panel.background = element_blank()) +
+  theme_bw() +
+  theme(panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()) +
+    theme(axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14)) +
+  labs(colour = "Status")
+```
+
+
+```{r}
+
+
+
+```
+
 
 #From here down should be a script for communities to use, but add all of the tests in 
 
