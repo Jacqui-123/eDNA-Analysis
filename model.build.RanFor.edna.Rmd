@@ -44,6 +44,11 @@ all.equal(edna_benthic$Sample_ID, meta$Sample_ID) #should return true
 #merge benthic data and meta data 
 edna_meta_benth <- merge(meta, edna_benthic, on = "Sample_ID") 
 
+
+ edna_meta_benth$Sample_richness
+
+edna_meta_benth %>% filter(Status == "Test")
+
 ```
 
 Habitat data tidying and merge - results in one aligned dataframe with all benthic, meta, and habitat data
@@ -98,7 +103,7 @@ alldata <- full_join(alldata, df_stressors, by = 'Sample_ID') %>% select(which(!
 ```
 
 
-Code from here down is adapted from J.Van Sickle RF model
+Code from here down is adapted from J.Van Sickle RF model, 02/25/10
 
 #### STEP 1 -- INITIAL SETUP -- Organize the bug (benthic macroinvertebrate) and predictor (habitat) data
 
@@ -248,15 +253,18 @@ See: http://stratigrafia.org/8370/lecturenotes/clusterAnalysis.html#:~:text=The%
 ##Use vegan to create a dissimilarity matrix to use for the clustering analysis using the calibration sites of the benthic dataset
 ##vegdist on calibration data, method = bray, binary = true
 
-dissim <- vegdist(bugcal.pa, method="bray", binary=TRUE)
+dissim <- vegdist(bugcal.pa, method="jaccard", binary=TRUE)
 
-clus1 <- agnes(x=dissim, diss=T, method="flexible", par.method=0.8,keep.diss=F,keep.data=F)
+clus1 <- agnes(x=dissim,diss=T,method="flexible",par.method=0.8,keep.diss=F,keep.data=F)
 
 plot(clus1,which.plots=2,labels=row.names(bugcal.pa), cex=.4)
 rect.hclust(clus1, k = 3, border = 2:5)
 abline(h=25.0, col='red')
 
-factoextra::fviz_dend(clus1, cex = 0.4, k = 3)
+factoextra::fviz_dend(clus1, cex = 0.4, k = 3, k_colors = viridis::viridis_pal(option = 'D')(3),
+main = "Dendogram for agglomerative hierarchical clustering \n (distance matrix using flexible linkage method)")
+
+?fviz_dend()
 clus1$ac  #agglomerative coefficient is high, 0.99
 
 ```
@@ -382,20 +390,7 @@ plot(1:length(eigen), eigen, type = 'b', main = "scree plot")
 
 ```
 
-Heatmap, maybe ignore
-```{r}
-
-heatmap(as.matrix(bugcal.pa), scale = "row", col = viridis:: viridis(25))
-
-heatmap_data <- reshape2::melt(cbind(bugcal.pa, Cluster = as.factor(clusters)))
-
-ggplot(heatmap_data, aes(x = variable, y = Cluster, fill = value)) +
-  geom_tile() +
-  scale_fill_viridis_b() +
-  theme_bw()
-
-```
-#NMDS plot for cluster 1
+#NMDS plot
 
 ```{r}
 library(vegan)
@@ -412,7 +407,14 @@ points(nmds_result, col = clusters)
 ggplot(nmds_data, aes(x = MDS1, y = MDS2, color = clusters)) +
   geom_point() +
   viridis::scale_color_viridis(discrete = TRUE) +
-  theme_bw()
+  theme_bw() +
+     theme(panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()) +
+    theme(axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14)) +
+  ggtitle("MDS plot") +  theme(plot.title = element_text(hjust = 0.5))
 
 
 ```
@@ -638,7 +640,6 @@ rfdat$Groups <- factor(rfdat$Groups)
 
 ```{r}
 
-
 rf.mod <- randomForest(Groups ~ ., data=rfdat, ntree=500, importance=TRUE, norm.votes=TRUE, keep.forest=TRUE)
 
 print(rf.mod)   #Displays out-of-bag (OOB) error matrix. Columns are predicted class, rows are true class
@@ -833,8 +834,8 @@ abline(0,1); #add a 1-1 line
   
 #Mean(O/E) and SD(O/E), from null model: 
 #0.790        0.378
-
 ```
+
 
 ```{r}
 
@@ -861,12 +862,45 @@ xlab('  ') +
   theme(axis.text.x = element_text(face="bold", size=10 )) +
     labs(color = "Cluster Number") +
   viridis::scale_fill_viridis(discrete = TRUE) +
-  theme(legend.position = "none")
+  theme(legend.position = "none") +
+   theme(panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()) +
+    theme(axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14))
+
+```
+#graphing boxplots by null vs non-null O/E scores
+```{r}
+
+
+melted_results_rf <- melt(results_ref_test, id.vars = 'Status', measure.vars = c('OoverE.null', "OoverE"))
+
+
+melted_results_rf %>% filter(Status == "Test") %>%
+ggplot(aes(x= variable, y = value)) +
+   geom_boxplot(fill = 'orange') +
+  stat_boxplot(geom = "errorbar") +
+      theme_bw() +
+  ylim(0,2) +
+xlab('  ') + 
+  ylab('') +
+  ggtitle("Random Forest Model Results for Test Sites vs Null Model") + 
+      theme(plot.title = element_text(hjust = 0.5, size = 12)) +
+  theme(axis.text.x = element_text(face="bold", size=10 )) +
+    labs(color = "Cluster Number") +
+  viridis::scale_fill_viridis(discrete = TRUE) +
+  theme(legend.position = "none") +
+   theme(panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()) +
+    theme(axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14)) 
 
 
 ```
-
-
 
 
 

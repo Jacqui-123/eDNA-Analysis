@@ -1,0 +1,392 @@
+
+
+Sequence read data 
+
+
+```{r}
+
+library(dplyr)
+library(tidyverse)
+
+#load in data
+sequence_data <- read.csv("Filtered_genus_level_data_MaritimeRivers_noblank.csv", header = TRUE)
+
+#calc esv sizes
+calc_esvsizes <- sequence_data %>% filter(Order=='Trichoptera'|Order=='Plecoptera_Insecta'|Order=='Ephemeroptera') %>%
+    group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer, Genus, Order) %>%
+    summarise(ESVsize = sum(ESVsize))
+
+#calc species richness
+esv_richness <- calc_esvsizes %>% 
+  group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer) %>%
+  mutate("species_richness" = n()) %>%
+  group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer, species_richness) %>%
+  summarise(ESVsize_sum = sum(ESVsize))
+
+#correlation between esv and species richness for each primer 
+for (i in unique(esv_richness$TrimmedPrimer)) {
+  x <- esv_richness[esv_richness$TrimmedPrimer == i,]$ESVsize_sum
+  y <- esv_richness[esv_richness$TrimmedPrimer == i,]$species_richness
+  m <- cor(x, y)
+  print(i)
+  print(m)
+}
+#results: low positive correlation across the board
+
+```
+
+
+```{r}
+
+#plot richness vs. esv for each primer
+
+for (i in unique(esv_richness$TrimmedPrimer)) {
+
+  ESVsize_sum <- esv_richness[esv_richness$TrimmedPrimer == i,]$ESVsize_sum
+  species_richness <- esv_richness[esv_richness$TrimmedPrimer == i,]$species_richness
+  Trimmed_Primer <- esv_richness[esv_richness$TrimmedPrimer == i,]$TrimmedPrimer[1] 
+  plot(ESVsize_sum ~ species_richness)
+  title(Trimmed_Primer)
+
+}
+
+```
+
+Use sequence read data to get families - use this for the model reports
+
+```{r}
+sequence_data <- read.csv("Filtered_genus_level_data_MaritimeRivers_noblank.csv", header = TRUE)
+
+sequence_ids <- sequence_data %>%
+  select(Genus, Family, Order) %>%
+  distinct()
+
+
+bugall_long <- alldata %>% 
+  filter(Status == "Reference") %>%
+  #column_to_rownames("Sample_ID") %>%
+  select(Ablabesmyia:Xenochironomus, Sample_ID) %>%
+  pivot_longer(names_to = "Genera", values_to = "presence_absence", cols = -Sample_ID) #41,292
+
+
+bugall_taxonomy <- left_join(bugall_long, sequence_ids, by = c("Genera" = "Genus"))
+
+
+bugall_taxonomy <- bugall_taxonomy %>%
+    mutate(Order = (if_else(Genera == "Spongilla", "Spongillida", Order)),
+         Family = (if_else(Genera == "Spongilla", "Spongillidae", Family))) #update missing orders/families
+
+#find most common famlies and the percent total occurrences of each
+family <- bugall_taxonomy %>%
+  group_by(Family) %>%
+  filter(presence_absence == 1) %>%
+  summarise(count = n()) %>%
+  mutate(percent = count/7731 * 100) %>%
+  arrange(percent)
+
+
+family_top <- family %>%
+  filter(Family == "Chironomidae" | Family == "Baetidae" | Family == "Ephemerellidae" | Family == "Heptageniidae" | Family == "Hydropsychidae") %>%
+   select(Family, percent)
+ 
+ various_percentages <- 100-sum(family_top$percent)
+ family_top_var <- rbind(family_top, data.frame(Family = "Various Families", percent = various_percentages))
+ 
+ ggplot(family_top_var, aes(x = Family, y = percent)) +
+   geom_bar(stat = "identity", color = "white", fill ="lightgreen") +
+   theme_bw() +
+   coord_flip() +
+   ylab("") +
+   xlab("") +
+   ggtitle("Percent Total Observations for Family")
+ 
+
+```
+
+
+```{r}
+order  <- bugall_taxonomy %>%
+  group_by(Order) %>%
+  filter(presence_absence == 1) %>%
+  summarise(count = n()) %>%
+  mutate(percent = count/7731 *100) %>%
+  arrange(percent)
+ 
+order_top <- order %>%
+  filter(Order == "Ephemeroptera" | Order == "Trichoptera" | Order == "Diptera" | Order == "Plecoptera_Insecta" ) %>%
+   select(Order, percent)
+ 
+ various_percentages <- 100-sum(order_top$percent)
+ order_top_var <- rbind(order_top, data.frame(Order = "Various Orders", percent = various_percentages))
+ 
+ ggplot(order_top_var, aes(x = Order, y = percent)) +
+   geom_bar(stat = "identity", color = "white", fill ="skyblue") +
+   theme_bw() +
+   coord_flip() +
+   ylab("") +
+   xlab("") +
+   ggtitle("Percent Total Observations for Order")
+
+```
+
+ESV sizes vs richness for E, P, T separately
+```{r}
+
+#calc species richness and esv sizes for E, P, T orders 
+esv_richness_ept <- calc_esvsizes %>% 
+  group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer) %>%
+  summarise(Trichoptera_richness = sum(Order == "Trichoptera"),
+            Plecoptera_richness = sum(Order == "Plecoptera_Insecta"),
+            Ephemeroptera_richness = sum(Order == "Ephemeroptera"),
+            ESVsize_Trichoptera = sum(ESVsize[Order == "Trichoptera"]), 
+            ESVsize_Plecoptera = sum(ESVsize[Order == "Plecoptera_Insecta"]),
+            ESVsize_Ephemeroptera = sum(ESVsize[Order == "Ephemeroptera"]))
+
+#plot Trichoptera_richness vs. ESVsize_Trichoptera
+for (i in unique(esv_richness_ept$TrimmedPrimer)) {
+
+  ESVsizesum_Trichoptera <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$ESVsize_Trichoptera
+  Trichoptera_richness <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$Trichoptera_richness
+  Trimmed_Primer <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$TrimmedPrimer[1] 
+  plot(ESVsizesum_Trichoptera ~ Trichoptera_richness)
+  title(Trimmed_Primer)
+
+}
+
+#plot Plecoptera_richness vs. ESVsize_Plecoptera
+for (i in unique(esv_richness_ept$TrimmedPrimer)) {
+
+  ESVsize_Plecoptera <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$ESVsize_Plecoptera
+  Plecoptera_richness <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$Plecoptera_richness
+  Trimmed_Primer <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$TrimmedPrimer[1] 
+  plot(ESVsize_Plecoptera ~ Plecoptera_richness)
+  title(Trimmed_Primer)
+
+}
+
+
+#plot Ephemeroptera_richness vs. ESVsize_Ephemeroptera
+for (i in unique(esv_richness_ept$TrimmedPrimer)) {
+
+  ESVsize_Ephemeroptera <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$ESVsize_Ephemeroptera
+  Ephemeroptera_richness <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$Ephemeroptera_richness
+  Trimmed_Primer <- esv_richness_ept[esv_richness_ept$TrimmedPrimer == i,]$TrimmedPrimer[1] 
+  plot(ESVsize_Ephemeroptera ~ Ephemeroptera_richness)
+  title(Trimmed_Primer)
+
+}
+
+
+```
+
+
+```{r}
+
+#Taxonomy data, ept 
+
+#overall tidying methods: 
+#Use GRDI_MixedSpecimenNumber column from “filtered_genus_level_data_MaritimeRivers_noblank.csv” and match to the Sample_ID_Taxonomy column from "Matched eDNA and CABIN samples.csv"
+#Use the Sample_ID_Taxonomy column from the joined data and match to “CABIN_family.csv” 
+
+#first get the total esv sizes and richness as a sum total of all primers for eph/plec/tric, since we can't distinguish between individual primers for the morphology dataset 
+esv_richness_ept_allprimers <- calc_esvsizes %>% 
+  group_by(GRDI_MixedSpecimenNumber, Order) %>% #add TrimmedPrimers to group_by to calc by primers, as in df "esv_richness_ept" above
+  summarise(ESVsize_sum = sum(ESVsize))  
+
+
+#load in matched cabin morphology and edna sites 
+matched_data <- read.csv("Matched eDNA and CABIN samples.csv", header = TRUE)
+
+#join esv_richness$GRDI_MixedSpecimenNumber to matched_data$Sample_ID_UPDATED_eDNA
+esv_richness_matched <- left_join(matched_data, esv_richness_ept_allprimers, by = c('Sample_ID_UPDATED_eDNA' = 'GRDI_MixedSpecimenNumber'))  #esv_richness_ept_allprimers = 959 
+
+#load cabin family data
+cabin_family <- read.csv("21072022_CABIN family.csv", header = TRUE)
+
+#pivot longer to get the families in rows
+cabin_family_longer <- pivot_longer(cabin_family, names_to = "Family", cols = -Sample, values_to = "abundance")
+
+#use the sequence data to get a list of order, family pairs for identifying unknowns 
+ids <- sequence_data %>% select(Order, Family) %>% 
+  #filter(Order=='Trichoptera'|Order=='Plecoptera_Insecta'|Order=='Ephemeroptera') %>% 
+  distinct()
+
+cab_fam_ids_joined <- left_join(cabin_family_longer, ids, by = "Family")
+
+#Find unknown order-family pairs and match, because cabin_family doesn't have orders listed and has different families than the GRDI dataframe so some order-family pairs are missing. 
+#nas <- cab_fam_ids_joined[rowSums(is.na(cab_fam_ids_joined))> 0,] #are there nas for order or family? 
+#yes, there are many rows missing - find the distinct values and copy-paste in to excel and hand-enter the missing data
+#missing <- nas %>% select(Family) %>% distinct() #106 total families missing orders
+
+#load in data with missing orders from excel. List created from missing order names from cab_fam_ids_joined, and copy-pasted in to excel. 
+missing_taxonomy <- read.csv("taxonomy_family_order.csv")
+
+#join missing families/orders to the main cabin family dataframe. 
+cabin_family_joined <- left_join(cab_fam_ids_joined, missing_taxonomy, by = 'Family') %>% 
+  mutate(Order = coalesce(Order.x, Order.y)) %>% #Merge Order.x, Order.y columns together
+  select(-c(Order.x, Order.y)) %>%
+  filter(Order=='Trichoptera'|Order=='Plecoptera_Insecta'|Order=='Ephemeroptera') %>%
+  group_by(Sample, Order) %>%
+  summarise(Abundance_sum = sum(abundance)) %>%
+  ungroup()
+  
+
+#join esv_richness_matched$Sample_ID_Taxonomy to cabin_family_joined$Sample to get final df for plotting
+cabin_orders_esv <- left_join(esv_richness_matched, cabin_family_joined, by = c("Sample_ID_Taxonomy" =  "Sample", "Order" = "Order"))
+
+```
+
+
+
+```{r}
+
+#plots of esv size and abundance for e, p, t orders
+cabin_orders_esv$ESVsize_sum <- as.numeric(cabin_orders_esv$ESVsize_sum)
+cabin_orders_esv$Abundance_sum <- as.numeric(cabin_orders_esv$Abundance_sum)
+
+cabin_orders_esv %>% na.omit() %>%
+ggplot(aes(y = ESVsize_sum, x = Abundance_sum, color = Order)) + 
+  geom_point() +
+  facet_wrap(~Order,  strip.position = "top", ncol= 3) + #scales = 'free',
+    theme_bw() +
+  #scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+  ylab('ESV Size') + xlab('Abundance') +
+  #ggtitle("Ephemeroptera") +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))  +
+  theme(strip.placement = 'outside') +
+  theme(strip.background = element_blank()) +
+  theme(legend.position = "none")
+
+
+cabin_orders_esv %>% na.omit() %>%
+ggplot(aes(y = ESVsize_sum, x = Abundance_sum, color = Order)) + 
+  geom_point() +
+  #facet_wrap(~Order,  strip.position = "top", ncol= 3) + #scales = 'free',
+    theme_bw() +
+  #scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+  ylab('ESV Size') + xlab('Abundance') +
+  #ggtitle("Ephemeroptera") +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))  +
+  theme(strip.placement = 'outside') +
+  theme(strip.background = element_blank()) 
+
+
+```
+
+```{r}
+
+
+
+```
+
+
+```{r}
+
+#Taxonomy data, family only (only for ept orders) 
+
+#calc esv sizes across all primers for ept taxa, keeping families 
+calc_esvsizes_fam <- sequence_data %>% 
+  filter(Order=='Trichoptera'|Order=='Plecoptera_Insecta'|Order=='Ephemeroptera') %>%
+    group_by(GRDI_MixedSpecimenNumber, Family) %>%
+    summarise(ESVsize_sum = sum(ESVsize)) 
+  
+
+#load in matched cabin morphology and edna sites 
+matched_data <- read.csv("Matched eDNA and CABIN samples.csv", header = TRUE)
+
+#join esv_richness$GRDI_MixedSpecimenNumber to matched_data$Sample_ID_UPDATED_eDNA
+esv_richness_matched <- left_join(matched_data, calc_esvsizes_fam, by = c('Sample_ID_UPDATED_eDNA' = 'GRDI_MixedSpecimenNumber'))  
+
+#load cabin family data
+cabin_family <- read.csv("21072022_CABIN family.csv", header = TRUE)
+
+#pivot longer to get the families in rows
+cabin_family_longer_abund <- pivot_longer(cabin_family, names_to = "Family", cols = -Sample, values_to = "abundance") %>%
+  group_by(Sample, Family)%>%  
+  summarise(Abundance_sum = sum(abundance)) 
+
+cabin_families_esv <- left_join(esv_richness_matched, cabin_family_longer_abund, by = c("Sample_ID_Taxonomy" =  "Sample", "Family" = "Family")) 
+
+
+#Note: there are some missing data points, might have to re-match family-order pairs again as above
+
+```
+
+
+```{r}
+#plots of esv size and abundance for e, p, t orders
+cabin_families_esv$ESVsize_sum <- as.numeric(cabin_families_esv$ESVsize_sum)
+cabin_families_esv$Abundance_sum <- as.numeric(cabin_families_esv$Abundance_sum)
+
+
+cabin_families_esv %>% na.omit() %>%
+ggplot(aes(y = ESVsize_sum, x = Abundance_sum, color = Family)) + 
+  geom_point() +
+  #facet_wrap(~Order,  strip.position = "top", ncol= 3) + #scales = 'free',
+    theme_bw() +
+  #scale_color_manual(values = c('Test' = 'orange', 'Reference' = 'lightblue')) +
+  ylab('ESV Size') + xlab('Abundance') +
+  #ggtitle("Ephemeroptera") +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))  +
+  theme(strip.placement = 'outside') +
+  theme(strip.background = element_blank()) 
+
+
+```
+
+```{r}
+
+#eDNA data 
+
+eDNA data: 
+-Use GRDI_MixedSpecimenNumber column from “filtered_genus_level_data_MaritimeRivers_noblank.csv” and match to the Sample_ID_Taxonomy column from "Matched eDNA and CABIN samples.csv" 
+-Use the Sample_ID_UPDATED_eDNA column from the joined data and match to “21072022_eDNA genera.csv”
+
+
+#take filtered dataset and matched data set and match
+#filtered dataset: esv_richness
+
+#load in matched dataset matched_data
+
+filtered_matched_data <- full_join(esv_richness, matched_data, by = c("GRDI_MixedSpecimenNumber" = "Sample_ID_Taxonomy"))
+
+filtered_matched_data_edna <- full_join(esv_richness, matched_data, by = c("GRDI_MixedSpecimenNumber" = "Sample_ID_UPDATED_eDNA"))
+
+edna_genera <- read.csv("21072022_eDNA genera.csv", header = TRUE)
+
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+
+```
+
+
+```{r}
+
+
+
+```
+
+
+```{r}
+
+
+
+```
+
+
+```{r}
+
+
+
+```
+
