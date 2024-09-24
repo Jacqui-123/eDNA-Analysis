@@ -1,0 +1,101 @@
+
+Metrics and metacommunities and sequence read data exploration
+
+Description:
+1) Atlantic CABIN Sequence read plots
+2) GRDI metacommunity data exploration (just the beginning, data exploration not finished)
+
+files used: "Filtered_genus_level_data_MaritimeRivers_noblank.csv"
+            "GRDI dataset - ALL - filtered - GENUS-LEVEL - 2022-05-11.csv"
+
+#1) Sequence Reads 
+```{r}
+
+library(dplyr)
+library(tidyverse)
+
+#load in data
+sequence_data <- read.csv("Filtered_genus_level_data_MaritimeRivers_noblank.csv", header = TRUE)
+
+#calc esv sizes
+calc_esvsizes <- sequence_data %>% filter(Order=='Trichoptera'|Order=='Plecoptera_Insecta'|Order=='Ephemeroptera') %>%
+    group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer, Genus, Order) %>%
+    summarise(ESVsize = sum(ESVsize))
+
+#calc species richness
+esv_richness <- calc_esvsizes %>% 
+  group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer) %>%
+  mutate("species_richness" = n()) %>%
+  group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer, species_richness) %>%
+  summarise(ESVsize_sum = sum(ESVsize))
+
+#correlation between esv and species richness for each primer 
+for (i in unique(esv_richness$TrimmedPrimer)) {
+  x <- esv_richness[esv_richness$TrimmedPrimer == i,]$ESVsize_sum
+  y <- esv_richness[esv_richness$TrimmedPrimer == i,]$species_richness
+  m <- cor(x, y)
+  print(i)
+  print(m)
+}
+#results: low positive correlation across the board
+
+```
+
+
+```{r}
+
+#plot richness vs. esv for each primer
+
+for (i in unique(esv_richness$TrimmedPrimer)) {
+
+  ESVsize_sum <- esv_richness[esv_richness$TrimmedPrimer == i,]$ESVsize_sum
+  species_richness <- esv_richness[esv_richness$TrimmedPrimer == i,]$species_richness
+  Trimmed_Primer <- esv_richness[esv_richness$TrimmedPrimer == i,]$TrimmedPrimer[1] 
+  plot(ESVsize_sum ~ species_richness)
+  title(Trimmed_Primer)
+
+}
+
+```
+#2) GRDI data exploration for metacommunities and metrics - unfinished, this is what is done so far. JL Sept 2024
+```{r}
+
+grdi_data <- read.csv('GRDI dataset - ALL - filtered - GENUS-LEVEL - 2022-05-11.csv')
+
+```
+
+
+```{r}
+
+#How many unique genuses were detected in each sample? (for all primers)
+grdi_data %>%
+  group_by(GRDI_MixedSpecimenNumber, Genus) %>%
+  select(GRDI_MixedSpecimenNumber, Genus) %>%
+  distinct() %>%
+  group_by(GRDI_MixedSpecimenNumber) %>% 
+  tally(name = 'unique_genera_detected')
+
+```
+
+
+```{r}
+
+#How many genera were detected in each sample, for each primer?
+grdi_data %>%
+  group_by(GRDI_MixedSpecimenNumber, Genus, TrimmedPrimer) %>%
+  select(GRDI_MixedSpecimenNumber, Genus, TrimmedPrimer) %>%
+  distinct() %>%
+  group_by(GRDI_MixedSpecimenNumber, TrimmedPrimer) %>% 
+  tally(name = 'genera_detected')
+
+#these are not unique genera - ie. for sample, primer there could be the same genera detected >1x 
+
+```
+
+```{r}
+
+
+
+
+```
+
