@@ -1,0 +1,209 @@
+
+#Evaluation of New Sites using RIVPACS method for CABIN data
+
+This script can be used to make predictions for new eDNA data using the RIVPACS method (Van Sickle, 2008). Currently, users can evaluate up to 200 sites at a time.
+
+This model was developed for Atlantic Canada using reference sites from around the region. See Atlantic Canada eDNA CABIN report (ie; Jacqui's report) for more information on the methods used to develop the model. 
+
+The following script is an example of how to use the RIVPACs method to evaluate new sites using eDNA data, with a test dataset as an example. It is recommended that users run through the script using the test data provided before using new data.
+
+To begin:
+Ensure that the following items are in the same folder:
+
+predict script: model.predict.RanFor.4.2.R (do not alter)
+final model: RF.Model.eDNA.Version1.Rdata
+benthic data: benthic.csv (user data in a sample-by-taxa matrix with presence/absence (coded as 1 or 0))
+predictor dataset: predictors.csv (A corresponding file of predictor (habitat) data for the same samples for the same predictors)
+
+Notes on format for new data: 
+1) The predictor and benthic data should have the same formats as the original taxa and predictor sets used to build the model with the same or similar predictors and taxa (see example test csv files)
+2) The sample ID column in both files should be read into R as a row name (see examples below)
+
+3) Predictor data set must include the columns with the same names, units, etc.    as the model's predictor variables. All other columns will be ignored. Column order does not matter. Predictions and calculations of O/E (observed/expected) will be made only for those samples that have complete data for all model predictors
+
+4) Benthic data (Sample-by-taxa matrix). Must contain presence/absence (1 or 0), do not use this model with relative abundance data, as it will lead to inaccurate predictions. Missing or empty cells allowed, and the Sample ID's (row names) must match those of predictor data exactly. Any names for new taxa (column names) are acceptable, in any order, but only those new-data taxa names that match the names in the model data exactly will be used. All other taxa (columns) in the new benthic data will be ignored. Only 200 sites at a time can be input in the model, any more than this will need to be done in batches.
+
+
+```{r}
+
+library(Hmisc)
+library(randomForest)
+library(tidyverse)
+
+```
+
+Source the prediction script and also load the model
+
+```{r}
+
+source("C:/Users/LevyJ/Downloads/CABIN_files_JL_Sept 2024/eDNA-Analysis/model.predict.RanFor.4.2.r") 
+
+load('C:/Users/LevyJ/Downloads/CABIN_files_JL_Sept 2024/eDNA-Analysis/RF.Model.eDNA.Version1.Rdata')
+
+```
+
+Load in data. Adjust for "your dataset name.csv" and add full path name if not using a project.
+
+```{r}
+
+predall_test <- read.csv("C:/Users/LevyJ/Downloads/CABIN_files_JL_Sept 2024/eDNA-Analysis/predall_test.csv", row.names="Sample_ID", header=T)
+
+bugall_test <- read.csv("C:/Users/LevyJ/Downloads/CABIN_files_JL_Sept 2024/eDNA-Analysis/bugall_test.csv", row.names="Sample_ID", header=T)
+
+```
+
+#Data Preparation
+
+Inspect data and ensure the correct naming conventions are used for columns
+New data should have the sample id's as row names.
+
+```{r}
+
+#these are the names of the final predictors used in the model - see final CABIN report for units of measurement. Rename columns in new data to match these naming conventions 
+preds.final <- c("inundation", "slope","airtemp","precip",  "evapotransp", "elevation", "wetlands", "protectedarea", "orgcarbon", "snowcover", "runoff", "discharge")
+
+#To see a list of the taxa names that are were used to make the model:
+names(bugall_test)[colSums(bugall_test)>0] 
+#Any names for new taxa (column names) are acceptable, in any order, but only those new-data taxa names that match the names in the model data exactly will be used. All other taxa (columns) in the new data will be ignored. 
+
+```
+
+Double-check that the predictors and bug data have the same sample Ids
+```{r}
+
+row.names(bugall_test)==row.names(predall_test)
+bugall <-bugall_test[row.names(predall_test),] #should all read TRUE
+
+#check alignment again -- alignment OK (all read TRUE) 
+row.names(bugall_test)==row.names(predall_test)
+
+```
+
+Drop all samples or sites that do not not have complete data for the model predictors (habitat data)
+```{r}
+
+#drop sites that do not have complete predictor data
+pred_test <- predall_test[complete.cases(predall_test[,preds.final]),]
+bug_test <- bugall_test[row.names(pred_test),]
+
+```
+
+
+#RIVPACS Predictions
+
+Make predictions for new data- use the null model to evaluate new sites, not the predictive one. 
+
+The model outputs compare the observed condition (O) with the expected condition (E) using the observed over expected ratio (O/E index). The further away the O/E index is from 1, the more likely it is to be an impaired or enriched site (Armanini et al., 2013; Van Sickle, 2008). 
+
+```{r}
+
+
+OE.assess.test <- model.predict.RanFor.4.2(bugcal.pa, grps.final, preds.final, ranfor.mod = rf.mod, prednew = pred_test, bugnew = bug_test, Pc = 0.1, Cal.OOB = FALSE)
+
+```
+
+look at O/E scores, for all samples
+
+```{r}
+
+OE.assess.test$OE.scores
+
+```
+
+#Visualizations
+
+O over E boxplots: comparing Null and regular models 
+
+```{r}
+
+
+test_OE <- OE.assess.test$OE.scores %>%
+  rename("O/E" = "OoverE",
+         "O/E Null" = "OoverE.null") %>%
+  select('O/E','O/E Null' )%>% 
+  pivot_longer(cols = everything(), names_to = "Variable")
+
+
+ggplot(test_OE, aes(x = Variable, y = value, fill = Variable)) +
+   geom_boxplot() +
+  stat_boxplot(geom = "errorbar") +
+  geom_hline(yintercept = 1.0, linetype = "dashed", size = .6, color = "black") +
+  geom_hline(yintercept = c(0.680, 1.320), linetype = "dashed", size = 0.2, color = 'grey') +
+      theme_bw() +
+ ylab('O/E scores') +
+   xlab('') + 
+  viridis::scale_fill_viridis(discrete = TRUE) +
+  theme(legend.position = "none") +
+theme(panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()) +
+    theme(axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.ticks.x =element_blank(), 
+        axis.text.x = element_text(size = 11, face = "bold"))
+
+
+#unhash this to save plots as a png file
+#ggsave("OoverE_boxplots.png") 
+
+
+```
+
+#Note: Assessing individual sites
+The following text was in the original script created by John Van Sickle - I don't have the assess.one.sample script, so didn't write instructions but am leaving the text here as a placeholder in case it is desired later on. -JL
+
+ Assessing individual sites;
+source("assess.one.sample.4.1.r")
+This function assesses a single site or sample from a new (test) data set to which
+ model.predict.RanFor.4.2() has already been applied.
+ assess.one.sample() compares observed occurrences with the model-predicted probabilities of occurrence for all taxa;
+
+Input parameters are:
+       case -- A selected site or sample ID, for which a prediction has already been made using model.predict.v4(). ;
+ result.prd -- Output of model.predict.RanFor.4.1() for new samples that include the chosen case;
+ bugnew  -- Sample-by-taxa matrix of new samples that was submitted to model.predict.RanFor.4.1.().
+ Pc -- Cutoff for capture probabilties for inclusion of taxa in O/E;
+
+The function produces a data frame with one row for each taxon, and the following columns:
+ observed presence(1) or absence(0);
+ predicted capture probability;
+ Big.diff = "Yes", if there is a big difference (>=0.5 in magnitude) between observed and predicted;
+ In.OtoE = "Yes" if the taxon would be included in the O/E calculation for this sample, given the stated value of Pc;
+
+By default, the function prints out the results data frame with its rows(taxa) sorted by the magnitude of (observed-predicted),
+ as suggested in Van Sickle, J. (2008), JNABS 27:227-235;
+However, see below for other sorting possibilties;
+
+Example usage (case = "site name"):
+site1.result<-assess.one.sample.4.1(case="ATLCBNB_03_2016_1",result.prd=OE.assess.test, bugnew=bug.test.pa, Pc=0.5);
+ Alternative display is to sort the taxa by their predicted occurrence probabilities;
+site1.result[order(site1.result$predicted,decreasing=TRUE),];
+ Another alternative is to sort alphabetically by taxon name;
+site1.result[order(row.names(site1.result)),];
+
+End of model build and prediction examples
+
+
+```{r}
+
+
+
+```
+
+#References:
+
+Van Sickle, J. (2008). An index of compositional dissimilarity between observed and expected 
+assemblages. Journal of the North American Benthological Society, 27(2), 227–235. https://doi.org/10.1899/07-111.1
+
+
+Van Sickle, J. (2011). R-language scripts for RIVPACS-type predictive modeling, Version 4.2. U.S. Environmental Agency. Accessed September 2023. https://www.nemi.gov/methods/sams_method_summary/11952/ 
+
+
+Armanini, D. G., Monk, W. A., Carter, L., Cote, D., & Baird, D. J. (2013). Towards generalized reference condition models for environmental assessment: A case study on rivers in Atlantic Canada. Environmental Monitoring and Assessment, 185(8), 6247–6259. https://doi.org/10.1007/s10661-012-3021-2
+
+```{r}
+
+
+
+```
